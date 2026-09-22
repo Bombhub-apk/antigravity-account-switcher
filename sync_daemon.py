@@ -215,6 +215,14 @@ def save_user_settings(patch, instance_id=None, account_email=None):
 
 def get_primary_account():
     try:
+        tok = quota_engine.get_keychain_token()
+        if tok:
+            em = quota_engine.extract_token_email(tok)
+            if em:
+                return em
+    except Exception:
+        pass
+    try:
         man_path = Path.home() / ".gemini" / "accounts" / "manifest.json"
         if man_path.exists():
             with open(man_path, "r", encoding="utf-8") as f:
@@ -246,7 +254,7 @@ def is_account2(email):
     norm = str(email).lower().strip()
     if norm in ('instance_2', 'secondary_account') or 'account2' in norm:
         return True
-    return norm != str(PRIMARY_ACCOUNT).lower().strip() and norm != 'madgod.cum@gmail.com'
+    return norm != str(get_primary_account()).lower().strip()
 
 def get_instance_active_account(instance_id="instance_1"):
     home = Path.home()
@@ -296,9 +304,44 @@ def get_instance_active_account(instance_id="instance_1"):
             if idx < len(m_keys):
                 return m_keys[idx]
 
-        return SECONDARY_ACCOUNT
+        return get_secondary_account()
 
     # For instance_1:
+    # 1. Primary Source of Truth: Check live token in Windows Credential Manager / Keychain
+    try:
+        import server as srv_mod
+        if not getattr(srv_mod, 'is_dual_launching', lambda: False)():
+            tok = quota_engine.get_keychain_token()
+            if tok:
+                token_em = quota_engine.extract_token_email(tok)
+                if not token_em:
+                    q = quota_engine.fetch_quota_and_tier(tok)
+                    token_em = q.get("email") if q else None
+                if token_em:
+                    # Keep active_instance_1.txt and app_storage synchronized with live token
+                    try:
+                        f1 = home / ".gemini" / "accounts" / "active_instance_1.txt"
+                        f1.parent.mkdir(parents=True, exist_ok=True)
+                        f1.write_text(token_em, encoding="utf-8")
+                    except Exception:
+                        pass
+                    try:
+                        st1 = appdata / "Antigravity" / "app_storage.json"
+                        s_data = {}
+                        if st1.exists():
+                            with open(st1, "r", encoding="utf-8") as sf:
+                                s_data = json.load(sf)
+                        if s_data.get("antigravity:account_email") != token_em:
+                            s_data["antigravity:account_email"] = token_em
+                            with open(st1, "w", encoding="utf-8") as sf:
+                                json.dump(s_data, sf, indent=2)
+                    except Exception:
+                        pass
+                    return token_em
+    except Exception:
+        pass
+
+    # 2. Fallback to active_instance_1.txt
     f1 = home / ".gemini" / "accounts" / "active_instance_1.txt"
     if f1.exists():
         try:
@@ -308,6 +351,7 @@ def get_instance_active_account(instance_id="instance_1"):
         except Exception:
             pass
 
+    # 3. Fallback to app_storage.json
     st1 = appdata / "Antigravity" / "app_storage.json"
     if st1.exists():
         try:
@@ -318,16 +362,7 @@ def get_instance_active_account(instance_id="instance_1"):
         except Exception:
             pass
 
-    try:
-        tok = quota_engine.get_keychain_token()
-        if tok:
-            q = quota_engine.fetch_quota_and_tier(tok)
-            if q and q.get("email") and (not saved_manifest or q["email"] in saved_manifest):
-                return q["email"]
-    except Exception:
-        pass
-
-    return PRIMARY_ACCOUNT
+    return get_primary_account()
 
 def is_port_open(port, host="127.0.0.1", timeout=0.5):
     try:
@@ -705,7 +740,7 @@ class QuotaHttpHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             import server as srv_mod
-            if self.path.startswith('/sync') or self.path.startswith('/quota'):
+            if self.path.startswith('/sync') or self.path.startswith('/quota') or self.path.startswith('/api/quota'):
                 import urllib.parse
                 parsed = urllib.parse.urlparse(self.path)
                 q_params = urllib.parse.parse_qs(parsed.query)
@@ -980,6 +1015,12 @@ class QuotaHttpHandler(BaseHTTPRequestHandler):
                     sync_mode=data.get('syncMode', 'shared'),
                     enabled=data.get('enabled')
                 )
+            elif self.path == '/api/project_toggle_all':
+                import migration_engine as m_eng
+                resp = m_eng.toggle_project_all(
+                    data.get('projectId'),
+                    state=data.get('state', 'all')
+                )
             elif self.path == '/api/project_sync':
                 import migration_engine as m_eng
                 resp = m_eng.sync_project_to_account(
@@ -992,6 +1033,19 @@ class QuotaHttpHandler(BaseHTTPRequestHandler):
                 resp = m_eng.unlink_project_from_account(
                     data.get('projectId'),
                     data.get('account')
+                )
+            elif self.path == '/api/task_assign':
+                import migration_engine as m_eng
+                resp = m_eng.set_task_account_assignment(
+                    data.get('taskName') or data.get('name'),
+                    data.get('accounts') or data.get('account', []),
+                    enabled=data.get('enabled')
+                )
+            elif self.path == '/api/task_toggle_all':
+                import migration_engine as m_eng
+                resp = m_eng.toggle_task_all(
+                    data.get('taskName') or data.get('name'),
+                    state=data.get('state', 'all')
                 )
             elif self.path == '/api/task_isolate':
                 import migration_engine as m_eng
@@ -1067,9 +1121,19 @@ async def cdp_broadcast_state(ws, extra_toast=None, instance_id="instance_1", ac
         tasks = m_eng.list_scheduled_tasks(account=actual_account) if hasattr(m_eng, 'list_scheduled_tasks') else []
         allowed_convs = m_eng.get_allowed_conversations(actual_account) if hasattr(m_eng, 'get_allowed_conversations') else []
 
+        running_accounts = {}
+        try:
+            for t in get_devtools_targets():
+                acc = t.get("default_account")
+                if acc:
+                    running_accounts[t["instance_id"]] = acc
+        except Exception:
+            pass
+
         payload = json.dumps({
             "activeAccount": active_acc,
             "savedAccounts": manifest,
+            "runningAccounts": running_accounts,
             "conversations": conversations,
             "projects": projects,
             "tasks": tasks,
@@ -1199,7 +1263,7 @@ async def cdp_handle_action(ws, action, data, instance_id="instance_1", default_
                 "msg": f"انتقال {res.get('migrated_count', 0)} گفتگو با موفقیت انجام شد" if res.get("success") else (res.get("error") or "خطا در انتقال"),
                 "isErr": not res.get("success")
             })
-        elif action == "assignProject":
+        elif action in ["assignProject", "setProjectAssignment"]:
             p_id = data.get("projectId")
             accs = data.get("accounts") or data.get("account", [])
             enb = data.get("enabled")
@@ -1207,6 +1271,14 @@ async def cdp_handle_action(ws, action, data, instance_id="instance_1", default_
             res = m_eng.set_project_assignment(p_id, accs, sync_mode=sm, enabled=enb)
             broadcast_all_instances({
                 "msg": "تنظیمات دسترسی پروژه بروزرسانی شد" if res.get("success") else (res.get("error") or "خطا در تخصیص پروژه"),
+                "isErr": not res.get("success")
+            })
+        elif action == "toggleProjectAll":
+            p_id = data.get("projectId")
+            st = data.get("state", "all")
+            res = m_eng.toggle_project_all(p_id, state=st)
+            broadcast_all_instances({
+                "msg": f"پروژه برای {'همه اکانت‌ها فعال' if st == 'all' else 'همه اکانت‌ها غیرفعال'} شد" if res.get("success") else "خطا در تغییر وضعیت پروژه",
                 "isErr": not res.get("success")
             })
         elif action == "syncProject":
@@ -1224,6 +1296,23 @@ async def cdp_handle_action(ws, action, data, instance_id="instance_1", default_
             res = m_eng.unlink_project_from_account(p_id, acc)
             broadcast_all_instances({
                 "msg": f"پروژه با موفقیت از {acc} جدا شد" if res.get("success") else (res.get("error") or "خطا در جداسازی پروژه"),
+                "isErr": not res.get("success")
+            })
+        elif action in ["assignTask", "setTaskAssignment"]:
+            t_name = data.get("taskName") or data.get("name")
+            accs = data.get("accounts") or data.get("account", [])
+            enb = data.get("enabled")
+            res = m_eng.set_task_account_assignment(t_name, accs, enabled=enb)
+            broadcast_all_instances({
+                "msg": "تنظیمات دسترسی تسک بروزرسانی شد" if res.get("success") else (res.get("error") or "خطا در تخصیص تسک"),
+                "isErr": not res.get("success")
+            })
+        elif action == "toggleTaskAll":
+            t_name = data.get("taskName") or data.get("name")
+            st = data.get("state", "all")
+            res = m_eng.toggle_task_all(t_name, state=st)
+            broadcast_all_instances({
+                "msg": f"تسک برای {'همه اکانت‌ها فعال' if st == 'all' else 'همه اکانت‌ها غیرفعال'} شد" if res.get("success") else "خطا در تغییر وضعیت تسک",
                 "isErr": not res.get("success")
             })
         elif action == "isolateTask":

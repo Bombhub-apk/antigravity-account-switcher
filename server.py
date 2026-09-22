@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Antigravity Switcher & Migration Local Server
-Author: Ethan Carter (https://github.com/Bombhub-apk/antigravity-account-switcher)
+Author: Madgod-xyz (https://github.com/Madgod-xyz/antigravity-account-switcher)
 Description:
     Local lightweight HTTP server that hosts the iOS Liquid Glass web interface
     and handles IPC actions (Switch, Save, Migrate, Delete, Refresh).
@@ -347,30 +347,45 @@ def get_instance_dir_for_account(account_key):
         appdata = home / "Library" / "Application Support"
 
     manifest = load_manifest()
-    entry = manifest.get(account_key, {})
+    entry = manifest.setdefault(account_key, {})
+    target_email = account_key.lower().strip()
 
-    # 1. If manifest already has an explicit instance_id
+    # 1. If manifest already has an explicit instance_id for THIS account
     assigned_inst = entry.get("instance_id")
     if assigned_inst and assigned_inst != "instance_1":
         num = "".join(filter(str.isdigit, assigned_inst))
         if num:
-            return assigned_inst, appdata / f"Antigravity-Instance{num}"
-        return assigned_inst, appdata / f"Antigravity-{assigned_inst}"
-
-    # 2. Check existing Antigravity-Instance* directories for this account
-    try:
-        for inst_dir in sorted(appdata.glob("Antigravity-Instance*")):
-            if not inst_dir.is_dir():
-                continue
+            inst_dir = appdata / f"Antigravity-Instance{num}"
             storage_p = inst_dir / "app_storage.json"
             if storage_p.exists():
                 try:
                     with open(storage_p, "r", encoding="utf-8") as f:
                         acc = json.load(f).get("antigravity:account_email")
-                        if acc and acc.lower().strip() == account_key.lower().strip():
-                            dir_name = inst_dir.name
-                            num = "".join(filter(str.isdigit, dir_name))
-                            inst_id = f"instance_{num}" if num else dir_name.lower().replace("-", "_")
+                        if not acc or acc.lower().strip() == target_email:
+                            return assigned_inst, inst_dir
+                except Exception:
+                    return assigned_inst, inst_dir
+            else:
+                return assigned_inst, inst_dir
+
+    # 2. Check existing Antigravity-Instance* directories on disk for THIS account
+    used_slots = set()
+    try:
+        for inst_dir in sorted(appdata.glob("Antigravity-Instance*")):
+            if not inst_dir.is_dir():
+                continue
+            dir_name = inst_dir.name
+            num_str = "".join(filter(str.isdigit, dir_name))
+            if num_str and num_str.isdigit():
+                used_slots.add(int(num_str))
+
+            storage_p = inst_dir / "app_storage.json"
+            if storage_p.exists():
+                try:
+                    with open(storage_p, "r", encoding="utf-8") as f:
+                        acc = json.load(f).get("antigravity:account_email")
+                        if acc and acc.lower().strip() == target_email:
+                            inst_id = f"instance_{num_str}" if num_str else dir_name.lower().replace("-", "_")
                             entry["instance_id"] = inst_id
                             manifest[account_key] = entry
                             save_manifest(manifest)
@@ -380,20 +395,36 @@ def get_instance_dir_for_account(account_key):
     except Exception:
         pass
 
-    # 3. Find first unassigned slot >= 2
-    assigned_slots = set()
+    # Also check manifest entries for other accounts
     for acc, data in manifest.items():
+        if acc.lower().strip() == target_email:
+            continue
         i_id = data.get("instance_id", "")
         num = "".join(filter(str.isdigit, i_id))
         if num and num.isdigit():
-            assigned_slots.add(int(num))
+            used_slots.add(int(num))
 
+    # 3. Find first completely unassigned slot >= 2
     slot = 2
-    while slot in assigned_slots:
+    while slot in used_slots:
+        slot += 1
+
+    # Double check directory doesn't already belong to another account
+    while (appdata / f"Antigravity-Instance{slot}").exists():
+        cand_storage = (appdata / f"Antigravity-Instance{slot}") / "app_storage.json"
+        if cand_storage.exists():
+            try:
+                with open(cand_storage, "r", encoding="utf-8") as f:
+                    c_acc = json.load(f).get("antigravity:account_email")
+                    if c_acc and c_acc.lower().strip() == target_email:
+                        break
+            except Exception:
+                pass
         slot += 1
 
     inst_id = f"instance_{slot}"
     target_dir = appdata / f"Antigravity-Instance{slot}"
+    target_dir.mkdir(parents=True, exist_ok=True)
     entry["instance_id"] = inst_id
     manifest[account_key] = entry
     save_manifest(manifest)
