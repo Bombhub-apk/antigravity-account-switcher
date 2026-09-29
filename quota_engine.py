@@ -216,10 +216,10 @@ def extract_token_email(token_data):
         pass
     return None
 
-def ensure_fresh_token(token_data, account_email=None):
+def ensure_fresh_token(token_data, account_email=None, force_refresh=False):
     """
     Checks if an OAuth token is expired or close to expiring (< 5 mins).
-    If expired/near expiry, refreshes it using Google's token endpoint,
+    If expired/near expiry or force_refresh is True, refreshes it using Google's token endpoint,
     updates the dictionary / JSON string, saves it to disk at
     ~/.gemini/accounts/<account_email>.token if applicable, and returns the fresh JSON string.
     """
@@ -249,33 +249,34 @@ def ensure_fresh_token(token_data, account_email=None):
     if not refresh_token:
         return json.dumps(parsed, ensure_ascii=False) if is_json_str else parsed
 
-    needs_refresh = False
-    if expiry_str:
-        try:
-            import datetime
-            clean_exp = expiry_str.replace('Z', '+00:00')
-            if '.' in clean_exp:
-                parts = clean_exp.split('.')
-                tz_part = ''
-                if '+' in parts[1]:
-                    sub_parts = parts[1].split('+')
-                    parts[1] = sub_parts[0][:6]
-                    tz_part = '+' + sub_parts[1]
-                elif '-' in parts[1]:
-                    sub_parts = parts[1].split('-')
-                    parts[1] = sub_parts[0][:6]
-                    tz_part = '-' + sub_parts[1]
-                else:
-                    parts[1] = parts[1][:6]
-                clean_exp = parts[0] + '.' + parts[1] + tz_part
-            exp_dt = datetime.datetime.fromisoformat(clean_exp)
-            now_dt = datetime.datetime.now(datetime.timezone.utc)
-            if (exp_dt - now_dt).total_seconds() < 300:
+    needs_refresh = bool(force_refresh)
+    if not needs_refresh:
+        if expiry_str:
+            try:
+                import datetime
+                clean_exp = expiry_str.replace('Z', '+00:00')
+                if '.' in clean_exp:
+                    parts = clean_exp.split('.')
+                    tz_part = ''
+                    if '+' in parts[1]:
+                        sub_parts = parts[1].split('+')
+                        parts[1] = sub_parts[0][:6]
+                        tz_part = '+' + sub_parts[1]
+                    elif '-' in parts[1]:
+                        sub_parts = parts[1].split('-')
+                        parts[1] = sub_parts[0][:6]
+                        tz_part = '-' + sub_parts[1]
+                    else:
+                        parts[1] = parts[1][:6]
+                    clean_exp = parts[0] + '.' + parts[1] + tz_part
+                exp_dt = datetime.datetime.fromisoformat(clean_exp)
+                now_dt = datetime.datetime.now(datetime.timezone.utc)
+                if (exp_dt - now_dt).total_seconds() < 300:
+                    needs_refresh = True
+            except Exception:
                 needs_refresh = True
-        except Exception:
+        else:
             needs_refresh = True
-    else:
-        needs_refresh = True
 
     if needs_refresh:
         try:

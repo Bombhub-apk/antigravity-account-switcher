@@ -1,7 +1,7 @@
-﻿<#
+<#
 .SYNOPSIS
     Antigravity Account Switcher & Migration Suite for Windows 10 & 11
-    Author: Madgod-xyz (https://github.com/Madgod-xyz/antigravity-account-switcher)
+    Author: Ethan Carter (https://github.com/Bombhub-apk) & Madgod-xyz
     Description:
         Seamless 1-click Google account switcher & project migration suite for Google Antigravity.
         Features iOS Liquid Glass UI, multi-language support (EN, FA, ZH, ES), and live model quotas.
@@ -11,16 +11,21 @@ param (
     [switch]$Usage,
     [switch]$List,
     [string]$Switch,
+    [string[]]$SetProjectQuota,
+    [string]$LaunchInstance,
+    [switch]$StatusJson,
+    [switch]$NoRestart,
     [switch]$Save,
     [switch]$Logout,
     [string]$Migrate,
     [switch]$About,
     [switch]$GitHub,
-    [switch]$CLI
+    [switch]$CLI,
+    [switch]$Help
 )
 
-$GitHubRepoUrl = "https://github.com/Madgod-xyz/antigravity-account-switcher"
-$AuthorName = "Madgod-xyz (https://github.com/Madgod-xyz)"
+$GitHubRepoUrl = "https://github.com/Bombhub-apk/antigravity-account-switcher"
+$AuthorName = "Ethan Carter (https://github.com/Bombhub-apk) & Madgod-xyz"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $AppDir = Join-Path $ScriptDir "app"
 $AccountsDir = Join-Path $HOME ".gemini\accounts"
@@ -322,8 +327,43 @@ function Open-LiquidGlassUI {
 # -------------------------------------------------------------
 # CLI Dispatcher
 # -------------------------------------------------------------
+$cliPy = Join-Path $ScriptDir "cli.py"
+
+if ($Help) {
+    if (Test-Path $cliPy) {
+        & python $cliPy --help
+    } else {
+        Write-Host "`nAntigravity Account Switcher & Quota Monitor CLI" -ForegroundColor Cyan
+        Write-Host "Commands: -Usage, -List, -Switch <email>, -SetProjectQuota <proj> <email>, -LaunchInstance <slot>, -StatusJson, -Save, -Logout" -ForegroundColor White
+    }
+    exit
+}
+
+if ($StatusJson) {
+    if (Test-Path $cliPy) {
+        & python $cliPy --status-json
+    } else {
+        $manifest = Get-Manifest
+        $manifest | ConvertTo-Json -Depth 5
+    }
+    exit
+}
+
+if ($SetProjectQuota) {
+    if (Test-Path $cliPy) {
+        & python $cliPy --set-project-quota $SetProjectQuota
+    } else {
+        Write-Host "❌ cli.py required for setting project quota." -ForegroundColor Red
+    }
+    exit
+}
+
 if ($Usage) {
-    Show-UsageCLI
+    if (Test-Path $cliPy) {
+        & python $cliPy --usage
+    } else {
+        Show-UsageCLI
+    }
     exit
 }
 
@@ -340,37 +380,64 @@ if ($GitHub) {
 }
 
 if ($List) {
-    $manifest = Get-Manifest
-    $curr = Get-CurrentToken
-    Write-Host "`n🚀 Saved Antigravity Accounts [Windows]" -ForegroundColor Cyan
-    Write-Host "👨‍💻 Author: $AuthorName ($GitHubRepoUrl)`n" -ForegroundColor Gray
-    foreach ($prop in $manifest.PSObject.Properties) {
-        $active = ""
-        $tf = $prop.Value.token_file
-        if ($curr -and (Test-Path $tf) -and ((Get-Content $tf -Raw -Encoding UTF8).Trim() -eq $curr.Trim())) {
-            $active = " [ACTIVE ●]"
+    if (Test-Path $cliPy) {
+        & python $cliPy --list
+    } else {
+        $manifest = Get-Manifest
+        $curr = Get-CurrentToken
+        Write-Host "`n🚀 Saved Antigravity Accounts [Windows]" -ForegroundColor Cyan
+        Write-Host "👨‍💻 Author: $AuthorName ($GitHubRepoUrl)`n" -ForegroundColor Gray
+        foreach ($prop in $manifest.PSObject.Properties) {
+            $active = ""
+            $tf = $prop.Value.token_file
+            if ($curr -and (Test-Path $tf) -and ((Get-Content $tf -Raw -Encoding UTF8).Trim() -eq $curr.Trim())) {
+                $active = " [ACTIVE ●]"
+            }
+            $tier = if ($prop.Value.tier) { "[$($prop.Value.tier)]" } else { "[Free]" }
+            Write-Host " • $($prop.Name) $tier$active (Saved: $($prop.Value.saved_at))" -ForegroundColor White
         }
-        $tier = if ($prop.Value.tier) { "[$($prop.Value.tier)]" } else { "[Free]" }
-        Write-Host " • $($prop.Name) $tier$active (Saved: $($prop.Value.saved_at))" -ForegroundColor White
+        Write-Host ""
     }
-    Write-Host ""
     exit
 }
 
 if ($Switch) {
-    Switch-Account $Switch
+    if (Test-Path $cliPy) {
+        $extra = if ($NoRestart) { @("--no-restart") } else { @() }
+        & python $cliPy --switch $Switch @extra
+    } else {
+        Switch-Account $Switch
+    }
+    exit
+}
+
+if ($LaunchInstance) {
+    if (Test-Path $cliPy) {
+        & python $cliPy --launch-instance $LaunchInstance
+    } else {
+        & python "$ScriptDir\server.py" --launch-instance $LaunchInstance
+    }
     exit
 }
 
 if ($Save) {
-    Save-CurrentAccount
+    if (Test-Path $cliPy) {
+        & python $cliPy --save
+    } else {
+        Save-CurrentAccount
+    }
     exit
 }
 
 if ($Logout) {
-    Logout-And-Add
+    if (Test-Path $cliPy) {
+        & python $cliPy --logout
+    } else {
+        Logout-And-Add
+    }
     exit
 }
 
 # Default: Open the new iOS Liquid Glass GUI
 Open-LiquidGlassUI
+

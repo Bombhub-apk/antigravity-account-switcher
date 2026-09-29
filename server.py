@@ -228,13 +228,14 @@ def is_instance_running(inst_dir_or_name):
     if not inst_dir_or_name:
         return False
     needle = inst_dir_or_name.name.lower() if hasattr(inst_dir_or_name, "name") else str(inst_dir_or_name).lower()
+    needle_alt = needle.replace("instance_", "instance")
     try:
         import psutil
         for p in psutil.process_iter(['pid', 'name', 'cmdline']):
             name = (p.info.get('name') or '').lower()
             if 'antigravity' in name:
                 cmd = p.info.get('cmdline') or []
-                if any(needle in arg.lower() for arg in cmd):
+                if any(needle in arg.lower() or needle_alt in arg.lower() for arg in cmd):
                     return True
     except Exception:
         pass
@@ -1211,23 +1212,28 @@ class SwitcherHTTPHandler(SimpleHTTPRequestHandler):
             saved = load_manifest()
 
             # Dynamic active account resolution per instance
-            if req_inst == 'instance_2':
-                # Try reading assigned email from Antigravity-Instance2/app_storage.json
-                inst2_acc = None
+            num_slot = "".join(filter(str.isdigit, req_inst or ""))
+            if num_slot and int(num_slot) >= 2:
+                slot_idx = int(num_slot)
+                inst_acc = None
                 appdata = Path(os.getenv("APPDATA", str(Path.home() / "AppData" / "Roaming")))
-                inst2_storage = appdata / "Antigravity-Instance2" / "app_storage.json"
-                if inst2_storage.exists():
+                inst_storage = appdata / f"Antigravity-Instance{slot_idx}" / "app_storage.json"
+                if inst_storage.exists():
                     try:
-                        with open(inst2_storage, 'r', encoding='utf-8') as f:
+                        with open(inst_storage, 'r', encoding='utf-8') as f:
                             s_data = json.load(f)
-                            inst2_acc = s_data.get('antigravity:account_email')
+                            inst_acc = s_data.get('antigravity:account_email')
                     except Exception:
                         pass
-                if not inst2_acc or inst2_acc not in saved:
-                    # fallback to any non-madgod account
-                    inst2_acc = next((k for k in saved.keys() if k != 'madgod.cum@gmail.com'), 'bombhub.apk@gmail.com')
-                
-                entry = saved.get(inst2_acc, {})
+                if not inst_acc or inst_acc not in saved:
+                    # Match by instance_id in saved manifest
+                    inst_acc = next((k for k, v in saved.items() if v.get('instance_id') == f"instance_{slot_idx}"), None)
+                if not inst_acc and slot_idx == 4 and 'nabistudii0@gmail.com' in saved:
+                    inst_acc = 'nabistudii0@gmail.com'
+                if not inst_acc:
+                    inst_acc = next((k for k in saved.keys() if k != 'madgod.cum@gmail.com'), None)
+
+                entry = saved.get(inst_acc, {}) if inst_acc else {}
                 tok_file = entry.get('token_file', '')
                 if tok_file and os.path.exists(tok_file):
                     with open(tok_file, 'r', encoding='utf-8') as tf:
@@ -1241,16 +1247,22 @@ class SwitcherHTTPHandler(SimpleHTTPRequestHandler):
             convs = migration_engine.list_conversations()
             projects = migration_engine.list_projects()
             tasks = migration_engine.list_scheduled_tasks()
+            allowed_map = {
+                'instance_1': migration_engine.get_allowed_conversations('instance_1'),
+                'instance_2': migration_engine.get_allowed_conversations('instance_2')
+            }
+            if req_inst and req_inst not in allowed_map:
+                try:
+                    allowed_map[req_inst] = migration_engine.get_allowed_conversations(req_inst)
+                except Exception:
+                    pass
             payload = {
                 'activeAccount': active,
                 'savedAccounts': saved,
                 'conversations': convs,
                 'projects': projects,
                 'tasks': tasks,
-                'allowedConversations': {
-                    'instance_1': migration_engine.get_allowed_conversations('instance_1'),
-                    'instance_2': migration_engine.get_allowed_conversations('instance_2')
-                }
+                'allowedConversations': allowed_map
             }
             self.wfile.write(json.dumps(payload, ensure_ascii=False).encode('utf-8'))
         elif self.path == '/api/conversations':
@@ -1277,11 +1289,26 @@ class SwitcherHTTPHandler(SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps(load_user_settings(), ensure_ascii=False).encode('utf-8'))
+        elif parsed.path in ('/api/launch_dual', '/api/launch_instance'):
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.end_headers()
+            qs = urllib.parse.parse_qs(parsed.query)
+            acc = qs.get('accountKey', [None])[0] or qs.get('account', [None])[0] or qs.get('email', [None])[0]
+            proj = qs.get('projectPath', [None])[0] or qs.get('path', [None])[0]
+            resp = launch_dual_instance(acc, project_path=proj)
+            self.wfile.write(json.dumps(resp, ensure_ascii=False).encode('utf-8'))
         elif self.path == '/api/dual_status':
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.end_headers()
-            payload = {'instance2_running': is_instance2_running()}
+            payload = {
+                'instance2_running': is_instance2_running(),
+                'instances': {
+                    f"instance_{i}": is_instance_running(f"Antigravity-Instance{i}")
+                    for i in range(2, 6)
+                }
+            }
             self.wfile.write(json.dumps(payload, ensure_ascii=False).encode('utf-8'))
         else:
             super().do_GET()
@@ -1298,9 +1325,9 @@ class SwitcherHTTPHandler(SimpleHTTPRequestHandler):
         elif self.path == '/api/switch':
             acc_key = data.get('accountKey')
             resp = switch_account(acc_key, no_restart=data.get('noRestart', False))
-        elif self.path == '/api/launch_dual':
-            acc_key = data.get('accountKey')
-            project_path = data.get('projectPath')
+        elif self.path in ('/api/launch_dual', '/api/launch_instance'):
+            acc_key = data.get('accountKey') or data.get('account') or data.get('email')
+            project_path = data.get('projectPath') or data.get('path')
             resp = launch_dual_instance(acc_key, project_path=project_path)
         elif self.path == '/api/oauth_signin':
             target_acc = data.get('accountKey') or data.get('email')
@@ -1426,7 +1453,12 @@ def launch_gui(port=PORT):
         pass
 
 if __name__ == '__main__':
-    if len(sys.argv) > 1 and sys.argv[1] == '--server-only':
+    if len(sys.argv) > 1 and sys.argv[1] in ('--launch', '--launch-instance', '--focus'):
+        target = sys.argv[2] if len(sys.argv) > 2 else 'nabistudii0@gmail.com'
+        res = launch_dual_instance(target)
+        print(f"Multi-instance launch result for {target}: {res}")
+        sys.exit(0 if res.get('success') else 1)
+    elif len(sys.argv) > 1 and sys.argv[1] == '--server-only':
         p = start_server()
         print(f"Server started on port {p}")
         try:
