@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Antigravity Account Switcher & Migration Suite for Windows 10 & 11
     Author: Ethan Carter (https://github.com/Bombhub-apk) & Madgod-xyz

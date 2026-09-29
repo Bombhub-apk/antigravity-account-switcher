@@ -18,6 +18,7 @@ Commands:
 """
 
 import os
+import re
 import sys
 import json
 import time
@@ -67,6 +68,22 @@ RED = "\033[31m"
 MAGENTA = "\033[35m"
 WHITE = "\033[37m"
 BRIGHT_WHITE = "\033[97m"
+
+ANSI_STRIP_RE = re.compile(r'\x1b\[[0-9;]*[mK]')
+
+def strip_ansi(s):
+    """Strip ANSI escape sequences to compute true visible terminal width."""
+    return ANSI_STRIP_RE.sub('', s)
+
+def visible_width(s):
+    """Returns number of columns consumed by string in terminal."""
+    return len(strip_ansi(s))
+
+def box_line(content, inner_width):
+    """Wraps content with cyan borders and ensures exact padding."""
+    vlen = visible_width(content)
+    pad = max(0, inner_width - vlen)
+    return f"{CYAN}│{RESET}{content}{' ' * pad}{CYAN}│{RESET}"
 
 def make_bar(pct, width=20):
     """Generate a colored progress bar based on percentage used."""
@@ -121,40 +138,44 @@ def cmd_usage(args=None):
     s_used = float(sess.get('used_pct', 0.0))
     s_rem = float(sess.get('remaining_pct', 100.0 - s_used))
     s_resets = sess.get('resets_in', 'Ready')
-    s_bar = make_bar(s_used, 22)
+    s_bar = make_bar(s_used, 20)
 
     w_used = float(weekly.get('used_pct', 0.0))
     w_rem = float(weekly.get('remaining_pct', 100.0 - w_used))
     w_resets = weekly.get('resets_in', 'Ready')
-    w_bar = make_bar(w_used, 22)
+    w_bar = make_bar(w_used, 20)
 
-    box_width = 63
+    inner_width = 68
     print()
-    print(f"{CYAN}┌{'─' * (box_width - 2)}┐{RESET}")
+    print(f"{CYAN}┌{'─' * inner_width}┐{RESET}")
     title = "ANTIGRAVITY ACCOUNT SUITE • QUOTA MONITOR"
-    print(f"{CYAN}│{BOLD}{BRIGHT_WHITE}{title.center(box_width - 2)}{RESET}{CYAN}│{RESET}")
-    sub = f"Account: {email}  |  Plan: {tier}"
-    print(f"{CYAN}│{BRIGHT_GREEN}  {sub.ljust(box_width - 4)}{RESET}{CYAN}│{RESET}")
-    print(f"{CYAN}├{'─' * (box_width - 2)}┤{RESET}")
-    print(f"{CYAN}│{BOLD}{WHITE}  Active Session Quota (5-Hour Window):{RESET}{' ' * (box_width - 42)}{CYAN}│{RESET}")
-    print(f"{CYAN}│  {s_bar} {BOLD}{s_used:5.1f}% used{RESET} ({s_rem:5.1f}% rem)  {DIM}Reset: {s_resets}{RESET}".ljust(box_width + 12) + f"{CYAN}│{RESET}")
-    print(f"{CYAN}│                                                             │{RESET}")
-    print(f"{CYAN}│{BOLD}{WHITE}  Weekly Rolling Quota (7-Day Aggregate):{RESET}{' ' * (box_width - 44)}{CYAN}│{RESET}")
-    print(f"{CYAN}│  {w_bar} {BOLD}{w_used:5.1f}% used{RESET} ({w_rem:5.1f}% rem)  {DIM}Reset: {w_resets}{RESET}".ljust(box_width + 12) + f"{CYAN}│{RESET}")
+    t_pad = max(0, (inner_width - len(title)) // 2)
+    print(box_line((' ' * t_pad) + f"{BOLD}{BRIGHT_WHITE}{title}{RESET}", inner_width))
+    sub = f"  Account: {BOLD}{email}{RESET}  |  Plan: {BRIGHT_GREEN}{tier}{RESET}"
+    print(box_line(sub, inner_width))
+    print(f"{CYAN}├{'─' * inner_width}┤{RESET}")
+    print(box_line(f"  {BOLD}{WHITE}Active Session Quota (5-Hour Window):{RESET}", inner_width))
+    s_line = f"  {s_bar} {BOLD}{s_used:5.1f}% used{RESET} ({s_rem:5.1f}% rem)  {DIM}Reset: {s_resets}{RESET}"
+    print(box_line(s_line, inner_width))
+    print(box_line("", inner_width))
+    print(box_line(f"  {BOLD}{WHITE}Weekly Rolling Quota (7-Day Aggregate):{RESET}", inner_width))
+    w_line = f"  {w_bar} {BOLD}{w_used:5.1f}% used{RESET} ({w_rem:5.1f}% rem)  {DIM}Reset: {w_resets}{RESET}"
+    print(box_line(w_line, inner_width))
     
     if pools:
-        print(f"{CYAN}├{'─' * (box_width - 2)}┤{RESET}")
-        print(f"{CYAN}│{BOLD}{WHITE}  Individual Model Quota Breakdown:{RESET}{' ' * (box_width - 38)}{CYAN}│{RESET}")
+        print(f"{CYAN}├{'─' * inner_width}┤{RESET}")
+        print(box_line(f"  {BOLD}{WHITE}Individual Model Quota Breakdown:{RESET}", inner_width))
         for p in pools:
             p_name = p.get('name', 'Model')
             p_used = float(p.get('used_pct', 0.0))
             p_rem = float(p.get('remaining_pct', 100.0 - p_used))
             p_res = p.get('resets_in', 'Ready')
             p_bar = make_bar(p_used, 16)
-            line = f"  • {BOLD}{p_name.ljust(22)}{RESET} {p_bar} {p_used:5.1f}% ({p_res})"
-            print(f"{CYAN}│{line.ljust(box_width + 12)}{CYAN}│{RESET}")
+            p_name_padded = p_name[:22].ljust(22)
+            m_line = f"  • {BOLD}{p_name_padded}{RESET} {p_bar} {p_used:5.1f}%  {DIM}({p_res}){RESET}"
+            print(box_line(m_line, inner_width))
             
-    print(f"{CYAN}└{'─' * (box_width - 2)}┘{RESET}\n")
+    print(f"{CYAN}└{'─' * inner_width}┘{RESET}\n")
     return 0
 
 def cmd_list(args=None):
@@ -203,6 +224,8 @@ def cmd_list(args=None):
 
 def find_account_key(target):
     """Fuzzy match account key from email, name, or instance alias."""
+    if not target:
+        return None
     manifest = server.load_manifest()
     target_clean = target.strip().lower()
     
@@ -211,7 +234,7 @@ def find_account_key(target):
         if k.lower() == target_clean:
             return k
             
-    # 2. Email or name match
+    # 2. Email, name, or instance_id match
     for k, v in manifest.items():
         if v.get('email', '').lower() == target_clean:
             return k
@@ -262,7 +285,6 @@ def cmd_set_project_quota(project_arg, account_arg):
     matched_path = None
 
     proj_clean = project_arg.strip().lower()
-    # Normalize path if provided
     norm_arg = os.path.normpath(project_arg).lower()
 
     for p in projects:
@@ -300,17 +322,26 @@ def cmd_set_project_quota(project_arg, account_arg):
                 break
 
     if not matched_pid:
-        # Check if project_arg is an existing directory path on disk
-        if os.path.isdir(project_arg):
-            matched_pid = os.path.basename(os.path.normpath(project_arg))
-            matched_name = matched_pid
-            matched_path = os.path.abspath(project_arg)
-        else:
-            print(f"{RED}❌ Project '{project_arg}' not found.{RESET}")
-            print(f"Available projects:")
-            for p in projects:
-                print(f"  • {BOLD}{p.get('name')}{RESET} ({p.get('id')}) - Path: {DIM}{p.get('path')}{RESET}")
-            return 1
+        # Check candidate directory locations
+        candidates = [
+            project_arg,
+            os.path.join(os.getcwd(), project_arg),
+            os.path.join(str(SCRIPT_DIR.parent), project_arg),
+            os.path.join(str(SCRIPT_DIR), project_arg)
+        ]
+        for c in candidates:
+            if os.path.isdir(c):
+                matched_pid = os.path.basename(os.path.normpath(c))
+                matched_name = matched_pid
+                matched_path = os.path.abspath(c)
+                break
+
+    if not matched_pid:
+        print(f"{RED}❌ Project '{project_arg}' not found.{RESET}")
+        print(f"Available projects:")
+        for p in projects:
+            print(f"  • {BOLD}{p.get('name')}{RESET} ({p.get('id')}) - Path: {DIM}{p.get('path')}{RESET}")
+        return 1
 
     print(f"\n{BRIGHT_CYAN}⚙️  Assigning quota payer for project '{BOLD}{matched_name}{RESET}' -> {BOLD}{account_key}{RESET}...")
     res = migration_engine.set_project_quota_account(matched_pid, account_key)
@@ -324,8 +355,9 @@ def cmd_set_project_quota(project_arg, account_arg):
 
 def cmd_launch_instance(instance_or_account):
     """Launch or bring to focus an isolated concurrent Antigravity instance."""
-    print(f"\n{BRIGHT_CYAN}🚀 Launching Antigravity instance for '{BOLD}{instance_or_account}{RESET}'...")
-    res = server.launch_dual_instance(instance_or_account)
+    resolved = find_account_key(instance_or_account) or instance_or_account.strip()
+    print(f"\n{BRIGHT_CYAN}🚀 Launching Antigravity instance for '{BOLD}{resolved}{RESET}'...")
+    res = server.launch_dual_instance(resolved)
     if res.get('success'):
         msg = res.get('msg', 'Instance launched/focused successfully.')
         print(f"{BRIGHT_GREEN}✓ {msg}{RESET}\n")
@@ -427,7 +459,8 @@ def print_help():
   agy-quota
   agy-switch --list
   agy-switch --switch bombhub.apk@gmail.com
-  agy-switch --set-project-quota "antigravity-quota-monitor" bombhub.apk@gmail.com
+  agy-switch --switch instance_2 --no-restart
+  agy-switch --set-project-quota "gravity suitch accont" bombhub.apk@gmail.com
   agy-switch --launch-instance instance_2
   agy-switch --status-json
 """)
@@ -438,7 +471,15 @@ def main():
         # Default behavior with no arguments: open the Liquid Glass GUI
         return cmd_gui()
 
-    first = raw_args[0].lower().strip()
+    # Extract global flags like --no-restart
+    no_restart = '--no-restart' in raw_args
+    filtered_args = [a for a in raw_args if a != '--no-restart']
+
+    if not filtered_args:
+        print(f"{RED}❌ Please specify a command or account along with --no-restart.{RESET}")
+        return 1
+
+    first = filtered_args[0].lower().strip()
 
     if first in ('-h', '--help', 'help'):
         print_help()
@@ -451,27 +492,25 @@ def main():
         return cmd_list()
 
     if first in ('-s', '--switch', 'switch'):
-        if len(raw_args) < 2:
+        if len(filtered_args) < 2:
             print(f"{RED}❌ Please specify the account email or alias to switch to.{RESET}")
             print("Example: agy-switch --switch bombhub.apk@gmail.com")
             return 1
-        no_restart = '--no-restart' in raw_args
-        acc = [a for a in raw_args[1:] if a != '--no-restart'][0]
-        return cmd_switch(acc, no_restart=no_restart)
+        return cmd_switch(filtered_args[1], no_restart=no_restart)
 
     if first in ('--set-project-quota', 'set-project-quota', 'set-quota', '--set-quota'):
-        if len(raw_args) < 3:
+        if len(filtered_args) < 3:
             print(f"{RED}❌ Please provide both <project_id_or_path> and <account_email>.{RESET}")
             print("Example: agy-switch --set-project-quota \"gravity suitch accont\" bombhub.apk@gmail.com")
             return 1
-        return cmd_set_project_quota(raw_args[1], raw_args[2])
+        return cmd_set_project_quota(filtered_args[1], filtered_args[2])
 
     if first in ('--launch-instance', 'launch-instance', 'launch', '--launch'):
-        if len(raw_args) < 2:
+        if len(filtered_args) < 2:
             print(f"{RED}❌ Please specify the instance slot or account email.{RESET}")
             print("Example: agy-switch --launch-instance instance_2")
             return 1
-        return cmd_launch_instance(raw_args[1])
+        return cmd_launch_instance(filtered_args[1])
 
     if first in ('--status-json', 'status-json', '--json', 'json'):
         return cmd_status_json()
@@ -485,10 +524,9 @@ def main():
     if first in ('--gui', 'gui'):
         return cmd_gui()
 
-    # If first argument looks like an email or known account, treat as switch
-    matched = find_account_key(raw_args[0])
+    # If first argument looks like an email or known account or instance alias, treat as switch
+    matched = find_account_key(filtered_args[0])
     if matched:
-        no_restart = '--no-restart' in raw_args
         return cmd_switch(matched, no_restart=no_restart)
 
     print(f"{RED}❌ Unknown command or option: '{raw_args[0]}'{RESET}")
