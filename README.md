@@ -214,6 +214,73 @@ La **Suite de Cambio de Cuenta y Migración para Antigravity** desarrollada por 
 
 ---
 
+### ⌨️ راهنمای دستورات خط فرمان (CLI)
+
+ابزارهای خط فرمان به صورت سراسری در مسیر `%USERPROFILE%\.gemini\bin` (در ویندوز) و `/usr/local/bin` (در مک/لینوکس) نصب و ثبت شده‌اند:
+
+#### ۱. ابزار نمایش سهمیه (`agy-quota`)
+```bash
+agy-quota                      # 📊 نمایش لحظه‌ای سهمیه نشست ۵ ساعته و هفتگی با نوارهای رنگی
+agy-quota --status-json        # 🤖 دریافت وضعیت کامل سهمیه‌ها در قالب JSON جهت اتوماسیون
+agy-quota --list               # 📋 فهرست تمام حساب‌های ثبت‌شده به همراه وضعیت فعال/غیرفعال
+```
+
+#### ۲. ابزار مدیریت حساب‌ها و پروژه‌ها (`agy-switch`)
+```bash
+agy-switch                                      # 🖥 اجرای محیط گرافیکی شیشه‌ای (Liquid Glass GUI)
+agy-switch --usage                              # 📊 داشبورد متنی محدودیت‌های مدل‌ها در ترمینال
+agy-switch --list                               # 📋 مشاهده تمام اکانت‌های ذخیره‌شده و اکانت فعال
+agy-switch --switch <email>                     # ⚡️ تغییر آنی اکانت در Credential Manager سیستم‌عامل
+agy-switch --switch <email> --no-restart        # 🔄 سوئیچ سریع توکن بدون راه‌اندازی مجدد ادیتور
+agy-switch --set-project-quota <proj> <email>   # 💳 تعیین حساب کسر سهمیه برای یک پروژه مشخص
+agy-switch --launch-instance <slot_or_email>    # 🚀 اجرای پنجره مجزا برای حساب (مانند instance_2)
+agy-switch --status-json                        # 🤖 خروجی جامع ساختاریافته برای ایجنت‌های هوش مصنوعی
+agy-switch --save                               # 💾 ذخیره نشست فعال فعلی در فایل manifest
+agy-switch --logout                             # ➕ خروج از حساب فعال جهت لاگین با اکانت جدید
+agy-switch --help                               # ℹ️ راهنمای کامل دستورات و پارامترها
+```
+
+---
+
+### 🤖 سرور محلی پروتکل زمینه مدل (MCP Server)
+
+این سوئیت شامل یک سرور بومی و سبک استدیو MCP بدون وابستگی خارجی (`mcp_server.py`) است که به ایجنت‌های هوش مصنوعی (Google Antigravity, Claude Code, Gemini CLI, Cursor, VS Code) اجازه می‌دهد به سادگی و به شکل مستقل وضعیت سهمیه‌ها را بررسی کنند و بین هویت‌ها جابه‌جا شوند.
+
+#### ابزارهای ثبت‌شده در MCP:
+| نام ابزار | توضیحات | پارامترها |
+| :--- | :--- | :--- |
+| `get_quota_status` | دریافت سهمیه زنده، تایمر ۵ ساعته، سهمیه هفتگی و مصرف مدل‌ها | `account` (اختیاری: ایمیل یا شناسه)، `include_all` (بولین اختیاری) |
+| `switch_account` | سوئیچ توکن فعال در Credential Manager / Keychain | `account` (ایمیل یا نام مستعار اجباری)، `no_restart` (بولین اختیاری) |
+| `set_project_quota` | انتساب حساب پرداخت‌کننده سهمیه برای یک فضای کاری | `project` (نام، شناسه یا مسیر پروژه)، `account` (ایمیل یا نام مستعار) |
+| `list_saved_accounts` | دریافت لیست همه اکانت‌های ذخیره‌شده با طرح اشتراک و سهمیه‌ها | بدون پارامتر |
+
+#### نمونه تنظیمات MCP (`settings.json` یا `mcp_config.json`):
+```json
+{
+  "mcpServers": {
+    "antigravity-account-suite": {
+      "command": "python",
+      "args": [
+        "C:\\Users\\gerap\\Desktop\\agent-helper\\antigravity-account-switcher\\mcp_server.py"
+      ],
+      "env": {
+        "PYTHONIOENCODING": "utf-8"
+      }
+    }
+  }
+}
+```
+
+---
+
+### 🧠 مهارت اختصاصی ایجنت هوش مصنوعی (`antigravity-account-suite`)
+
+این مهارت در مسیر `~/.gemini/config/skills/antigravity-account-suite/SKILL.md` و همچنین داخل پوشه `skills/` مخزن نصب گردیده است:
+- **مدیریت خودکار خطای اتمام سهمیه (Automatic Quota Failover)**: زمانی که ایجنت در حین انجام وظایف با خطای نرخ مصرف (`429 Too Many Requests` یا `RESOURCE_EXHAUSTED`) مواجه می‌شود، به صورت خودکار دستور `agy-switch --status-json` را فراخوانی کرده، حسابی که بیشترین سهمیه باقیمانده را دارد برمی‌گزیند و با دستور `agy-switch --switch <account> --no-restart` بدون متوقف کردن یا مزاحمت برای کاربر، فرآیند کدنویسی را از سر می‌گیرد.
+- **ایزوله‌سازی پروژه‌ها**: ایجنت به طور خودکار مطمئن می‌شود که درخواست‌های ارسالی به سرور زبانی از حسابی کسر شوند که برای آن پروژه اختصاص یافته است.
+
+---
+
 ## 🇨🇳 简体中文
 
 ### 概述与核心特性

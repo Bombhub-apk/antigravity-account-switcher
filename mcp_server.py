@@ -6,7 +6,7 @@ Author: Ethan Carter (Bombhub-apk) & Madgod-xyz
 Repository: https://github.com/Bombhub-apk/antigravity-account-switcher
 
 Exposes tools to AI Agents (Antigravity, Gemini CLI, Claude Code, VS Code / Cursor):
-  - get_quota_status: Live quota data for active account and all accounts
+  - get_quota_status: Live quota data for active account or specified account
   - switch_account: Switch active account token in OS Credential Manager / Keychain
   - set_project_quota: Set designated quota payer account for a project
   - list_saved_accounts: List all registered accounts and active status
@@ -41,13 +41,41 @@ import migration_engine
 import server
 
 SERVER_NAME = "antigravity-account-suite"
-SERVER_VERSION = "1.0.0"
+SERVER_VERSION = "1.0.1"
 PROTOCOL_VERSION = "2024-11-05"
 
 def log_err(msg):
     """Write log messages to stderr so stdout remains 100% clean JSON-RPC."""
     sys.stderr.write(f"[mcp_server] {msg}\n")
     sys.stderr.flush()
+
+def resolve_account(target):
+    """Fuzzy match account key from email, name, or instance alias."""
+    if not target:
+        return None
+    manifest = server.load_manifest()
+    clean = target.strip().lower()
+
+    # 1. Exact key match
+    for k in manifest.keys():
+        if k.lower() == clean:
+            return k
+
+    # 2. Email, name, or instance_id match
+    for k, v in manifest.items():
+        if v.get('email', '').lower() == clean:
+            return k
+        if v.get('name', '').lower() == clean:
+            return k
+        if v.get('instance_id', '').lower() == clean:
+            return k
+
+    # 3. Substring match
+    for k in manifest.keys():
+        if clean in k.lower():
+            return k
+
+    return None
 
 TOOLS_DEFINITIONS = [
     {
@@ -58,7 +86,7 @@ TOOLS_DEFINITIONS = [
             "properties": {
                 "account": {
                     "type": "string",
-                    "description": "Specific account email to query (optional; defaults to the currently active account)"
+                    "description": "Specific account email or instance alias (e.g. 'instance_2', 'bombhub.apk@gmail.com') to query (optional; defaults to the currently active account)"
                 },
                 "include_all": {
                     "type": "boolean",
@@ -97,7 +125,7 @@ TOOLS_DEFINITIONS = [
                 },
                 "account": {
                     "type": "string",
-                    "description": "Email address of the account designated as the quota payer"
+                    "description": "Email address or alias of the account designated as the quota payer"
                 }
             },
             "required": ["project", "account"]
@@ -119,22 +147,35 @@ def handle_get_quota_status(args):
 
     res = {}
     if target_account:
+        resolved_key = resolve_account(target_account)
+        if not resolved_key:
+            return {
+                "success": False,
+                "error": f"Account '{target_account}' not found among registered accounts."
+            }
         manifest = server.load_manifest()
-        entry = manifest.get(target_account)
-        if not entry:
-            entry = next((v for k, v in manifest.items() if k.lower() == target_account.lower() or v.get('email', '').lower() == target_account.lower()), None)
-        
+        entry = manifest.get(resolved_key, {})
+        tok_file = entry.get('token_file')
         token_str = None
-        if entry:
-            tok_file = entry.get('token_file')
-            if tok_file and os.path.exists(tok_file):
+        if tok_file and os.path.exists(tok_file):
+            try:
                 with open(tok_file, 'r', encoding='utf-8') as f:
                     token_str = f.read().strip()
-        
-        q_data = quota_engine.fetch_quota_and_tier(token_str) if token_str else quota_engine.fetch_quota_and_tier()
-        res["account"] = target_account
+            except Exception:
+                pass
+
+        if not token_str:
+            return {
+                "success": False,
+                "error": f"Token file missing or unreadable for account '{resolved_key}'."
+            }
+
+        q_data = quota_engine.fetch_quota_and_tier(token_str)
+        res["success"] = True
+        res["account"] = resolved_key
         res["quota"] = q_data
     else:
+        res["success"] = True
         res["active_account"] = quota_engine.fetch_quota_and_tier()
 
     if include_all:
@@ -160,25 +201,14 @@ def handle_switch_account(args):
         return {"success": False, "error": "Missing required argument 'account'"}
     
     no_restart = bool(args.get("no_restart", False))
-    
-    # Fuzzy match account
-    manifest = server.load_manifest()
-    acc_clean = account.strip().lower()
-    matched_key = None
-    for k in manifest.keys():
-        if k.lower() == acc_clean:
-            matched_key = k
-            break
-    if not matched_key:
-        for k, v in manifest.items():
-            if v.get('email', '').lower() == acc_clean or acc_clean in k.lower():
-                matched_key = k
-                break
-    
-    if not matched_key:
-        matched_key = account.strip()
+    resolved_key = resolve_account(account)
+    if not resolved_key:
+        return {
+            "success": False,
+            "error": f"Account '{account}' not found among registered accounts."
+        }
 
-    res = server.switch_account(matched_key, no_restart=no_restart)
+    res = server.switch_account(resolved_key, no_restart=no_restart)
     return res
 
 def handle_set_project_quota(args):
@@ -186,6 +216,8 @@ def handle_set_project_quota(args):
     account = args.get("account")
     if not project or not account:
         return {"success": False, "error": "Missing required arguments 'project' and 'account'"}
+
+    resolved_acc = resolve_account(account) or account.strip()
 
     projects = migration_engine.list_projects()
     matched_pid = None
@@ -214,16 +246,25 @@ def handle_set_project_quota(args):
                 break
 
     if not matched_pid:
-        if os.path.isdir(project):
-            matched_pid = os.path.basename(os.path.normpath(project))
-            matched_name = matched_pid
-        else:
-            return {
-                "success": False,
-                "error": f"Project '{project}' not found among discovered projects."
-            }
+        candidates = [
+            project,
+            os.path.join(os.getcwd(), project),
+            os.path.join(str(SCRIPT_DIR.parent), project),
+            os.path.join(str(SCRIPT_DIR), project)
+        ]
+        for c in candidates:
+            if os.path.isdir(c):
+                matched_pid = os.path.basename(os.path.normpath(c))
+                matched_name = matched_pid
+                break
 
-    res = migration_engine.set_project_quota_account(matched_pid, account.strip())
+    if not matched_pid:
+        return {
+            "success": False,
+            "error": f"Project '{project}' not found among discovered projects."
+        }
+
+    res = migration_engine.set_project_quota_account(matched_pid, resolved_acc)
     res["project_name"] = matched_name
     return res
 
@@ -425,7 +466,7 @@ def run_self_test():
     assert "accounts" in acc_data, "Expected 'accounts' key"
     print(f"✓ tools/call (list_saved_accounts): OK ({acc_data['total_count']} accounts found)")
 
-    # 4. Test get_quota_status call
+    # 4. Test get_quota_status call (active account)
     q_res = process_rpc_request({
         "jsonrpc": "2.0",
         "id": 4,
@@ -434,13 +475,44 @@ def run_self_test():
     })
     assert not q_res.get("error"), f"get_quota_status error: {q_res}"
     q_data = json.loads(q_res["result"]["content"][0]["text"])
+    assert q_data.get("success") is True, f"get_quota_status failed: {q_data}"
     assert "active_account" in q_data or "quota" in q_data, "Expected quota data"
-    print("✓ tools/call (get_quota_status): OK")
+    print("✓ tools/call (get_quota_status - active): OK")
 
-    # 5. Test set_project_quota call
-    sp_res = process_rpc_request({
+    # 5. Test get_quota_status call with non-existent account (must return error, not silent fallback!)
+    q_fake = process_rpc_request({
         "jsonrpc": "2.0",
         "id": 5,
+        "method": "tools/call",
+        "params": {"name": "get_quota_status", "arguments": {"account": "nonexistent_fake_account_12345@test.com"}}
+    })
+    q_fake_data = json.loads(q_fake["result"]["content"][0]["text"])
+    assert q_fake_data.get("success") is False, f"Expected failure for fake account, got {q_fake_data}"
+    print("✓ tools/call (get_quota_status - non-existent error validation): OK")
+
+    # 6. Test switch_account call with non-existent account (validation without altering live token)
+    sw_fake = process_rpc_request({
+        "jsonrpc": "2.0",
+        "id": 6,
+        "method": "tools/call",
+        "params": {"name": "switch_account", "arguments": {"account": "nonexistent_fake_account_12345@test.com", "no_restart": True}}
+    })
+    sw_fake_data = json.loads(sw_fake["result"]["content"][0]["text"])
+    assert sw_fake_data.get("success") is False, f"Expected failure for fake account, got {sw_fake_data}"
+    print("✓ tools/call (switch_account - error validation): OK")
+
+    # 7. Test set_project_quota call and preserve previous assignment
+    # Read current quota account for gravity suitch accont
+    curr_projects = migration_engine.list_projects()
+    prev_payer = None
+    for p in curr_projects:
+        if "gravity suitch accont" in p.get("name", ""):
+            prev_payer = p.get("quota_account")
+            break
+
+    sp_res = process_rpc_request({
+        "jsonrpc": "2.0",
+        "id": 7,
         "method": "tools/call",
         "params": {
             "name": "set_project_quota",
@@ -453,6 +525,10 @@ def run_self_test():
     assert not sp_res.get("error"), f"set_project_quota error: {sp_res}"
     sp_data = json.loads(sp_res["result"]["content"][0]["text"])
     assert sp_data.get("success") is True, f"Failed set_project_quota: {sp_data}"
+    
+    # Restore if had previous payer
+    if prev_payer:
+        migration_engine.set_project_quota_account("38a862ea-ade2-428a-b094-ff969a0e51c1", prev_payer)
     print("✓ tools/call (set_project_quota): OK")
 
     print("\nAll MCP Server tool tests passed successfully!\n")
@@ -468,7 +544,6 @@ def main():
         try:
             line = sys.stdin.readline()
             if not line:
-                # EOF received
                 log_err("Client closed stdin connection. Exiting gracefully.")
                 break
             

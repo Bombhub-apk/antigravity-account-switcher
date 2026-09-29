@@ -449,7 +449,12 @@ def launch_dual_instance(account_key, project_path=None):
         manifest = load_manifest()
         entry = manifest.get(account_key)
         if not entry and account_key:
-            entry = next((v for k, v in manifest.items() if k.lower() == account_key.lower() or v.get('email', '').lower() == account_key.lower()), None)
+            entry = next((v for k, v in manifest.items() if k.lower() == account_key.lower() or v.get('email', '').lower() == account_key.lower() or v.get('instance_id', '').lower() == account_key.lower()), None)
+            if entry:
+                for k, v in manifest.items():
+                    if v == entry:
+                        account_key = k
+                        break
         if not entry and not account_key:
             # Auto-detect secondary account from manifest
             active_email = ""
@@ -661,12 +666,14 @@ def launch_dual_instance(account_key, project_path=None):
                 if not found_ls:
                     time.sleep(10.0)
 
-                # Now restore primary token back for Instance 1
-                if primary_token:
-                    fresh_primary = quota_engine.ensure_fresh_token(primary_token, account_email=active_email)
-                    write_token_to_credential_manager(fresh_primary)
-                    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [MULTI-INSTANCE] Restored primary token for active session ({inst_id} target {target_acc} safely initialized).", flush=True)
-                _dual_launch_in_progress = False
+                try:
+                    # Now restore primary token back for Instance 1
+                    if primary_token:
+                        fresh_primary = quota_engine.ensure_fresh_token(primary_token, account_email=active_email)
+                        write_token_to_credential_manager(fresh_primary)
+                        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [MULTI-INSTANCE] Restored primary token for active session ({inst_id} target {target_acc} safely initialized).", flush=True)
+                finally:
+                    _dual_launch_in_progress = False
 
                 # Bring window to front once rendered
                 for _ in range(15):
