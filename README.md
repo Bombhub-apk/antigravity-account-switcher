@@ -99,6 +99,13 @@ Switching between multiple Google accounts on **Google Antigravity** can be tedi
    - Explicitly designate which account pays for prompts in each project.
    - Live credential switching immediately routes language server requests to the designated account.
 
+9. 🤖 **Model Context Protocol (MCP) Server & Agent Skill**:
+   - Zero-dependency local stdio MCP server (`mcp_server.py`) exposing live quota queries, identity swaps, and project bindings to AI agents.
+   - Built-in Antigravity Agent Skill (`antigravity-account-suite`) enabling coding agents to automatically rotate accounts upon encountering rate limits (`429 / RESOURCE_EXHAUSTED`).
+
+10. ⌨️ **Global Terminal CLI Utilities (`agy-quota` & `agy-switch`)**:
+    - Real-time colored progress meters, per-model reset countdowns, JSON output for automation, and scriptable credential control directly from PowerShell and Bash.
+
 ---
 
 ### 💡 Quota Architecture: Single-Window vs. Concurrent Multi-Window Best Practices
@@ -180,6 +187,8 @@ La **Suite de Cambio de Cuenta y Migración para Antigravity** desarrollada por 
 * 📁 **مرکز گزینش و همگام‌سازی پروژه‌ها (Granular Project Sync Hub)**: انتخاب چک‌باکسی پروژه‌های مجاز برای اکانت دوم بدون قاطی شدن فایل‌های ناخواسته.
 * 📊 **نشانگر شناور درون‌برنامه‌ای (In-Editor HUD Pill)** در نوار انتخاب مدل با نمایش رتبه (`PRO` / `ULTRA`) و مصرف لحظه‌ای سهمیه‌ها (تفکیک دقیق سهمیه ۵ ساعته و هفتگی).
 * 🍏 **طراحی فوق‌العاده زیبای شیشه‌ای اپل (iOS Liquid Glass)** با انیمیشن‌های نرم ۶۰ فریم و پشتیبانی کامل راست‌چین (RTL).
+* 🤖 **سرور محلی پروتکل زمینه مدل (MCP Server)** بدون نیاز به وابستگی خارجی (`mcp_server.py`) برای اتصال مستقیم ابزارهای سوئیچ اکانت و بررسی سهمیه به ایجنت‌های هوش مصنوعی.
+* ⌨️ **دستورات جهانی خط فرمان (`agy-quota` و `agy-switch`)**: نمایش نمودارهای گرافیکی درصد سهمیه‌ها، زمان بازنشانی مدل‌ها و خروجی ساختاریافته JSON جهت اتوماسیون کامل.
 
 ---
 
@@ -218,18 +227,72 @@ La **Suite de Cambio de Cuenta y Migración para Antigravity** desarrollada por 
 
 ---
 
-## ⌨️ CLI Commands
+## ⌨️ CLI Commands & Utilities
 
+Global CLI tools are automatically registered in `%USERPROFILE%\.gemini\bin` (Windows) and `/usr/local/bin` (macOS/Linux):
+
+### 1. `agy-quota` — Dedicated Quota HUD
 ```bash
-agy-switch                 # 🖥 Open the iOS Liquid Glass Desktop GUI
-agy-switch --usage         # 📊 View live model quotas and countdowns in terminal
-agy-switch --list          # 📋 List all saved accounts and active session
-agy-switch --switch email  # ⚡️ Switch to a specific account immediately
-agy-switch --save          # 💾 Save the current active account
-agy-switch --logout        # ➕ Logout current account to sign into a new one
-agy-switch --migrate       # 🔄 List local project conversations for migration
-agy-switch --about         # ℹ️ Display author & version information
+agy-quota                      # 📊 Display live session & weekly quotas with colored bars
+agy-quota --status-json        # 🤖 Machine-readable JSON status for scripts & agents
+agy-quota --list               # 📋 List all registered accounts and active status
 ```
+
+### 2. `agy-switch` — Full Account & Project Suite
+```bash
+agy-switch                                      # 🖥 Open the iOS Liquid Glass Desktop GUI
+agy-switch --usage                              # 📊 Terminal dashboard of live model limits
+agy-switch --list                               # 📋 List registered accounts with active status
+agy-switch --switch <email>                     # ⚡️ Switch active identity in OS Credential Manager
+agy-switch --switch <email> --no-restart        # 🔄 Switch credential without restarting IDE
+agy-switch --set-project-quota <proj> <email>   # 💳 Assign designated quota payer for project
+agy-switch --launch-instance <slot_or_email>    # 🚀 Launch or focus isolated instance (e.g. instance_2)
+agy-switch --status-json                        # 🤖 Full JSON payload (active quota, manifest, instances)
+agy-switch --save                               # 💾 Save active session token to manifest
+agy-switch --logout                             # ➕ Log out active session to add a new account
+agy-switch --help                               # ℹ️ Display help and command syntax
+```
+
+---
+
+## 🤖 Model Context Protocol (MCP) Server
+
+The suite includes a lightweight, zero-dependency stdio MCP server (`mcp_server.py`) allowing autonomous coding agents (Google Antigravity, Claude Code, Gemini CLI, Cursor, VS Code) to inspect quotas and manage identities programmatically.
+
+### Registered MCP Tools:
+| Tool Name | Description | Parameters |
+| :--- | :--- | :--- |
+| `get_quota_status` | Returns live quota, 5-hour session reset timer, weekly limit, and per-model stats | `account` (optional string), `include_all` (optional bool) |
+| `switch_account` | Switches active token in OS Credential Manager / Keychain | `account` (required string), `no_restart` (optional bool) |
+| `set_project_quota` | Configures designated Google account payer for a project | `project` (required string), `account` (required string) |
+| `list_saved_accounts` | Lists all registered accounts, tiers, quotas, and active status | None |
+
+### Configuration Snippet:
+Add to your IDE or agent config (`settings.json` or `mcp_config.json`):
+```json
+{
+  "mcpServers": {
+    "antigravity-account-suite": {
+      "command": "python",
+      "args": [
+        "C:\\Users\\gerap\\Desktop\\agent-helper\\antigravity-account-switcher\\mcp_server.py"
+      ],
+      "env": {
+        "PYTHONIOENCODING": "utf-8"
+      }
+    }
+  }
+}
+```
+
+---
+
+## 🧠 Antigravity Agent Skill (`antigravity-account-suite`)
+
+Installed at `~/.gemini/config/skills/antigravity-account-suite/SKILL.md` and in the repository under `skills/`:
+- **Automated Quota Failover**: When an autonomous agent encounters `429 Too Many Requests` or `RESOURCE_EXHAUSTED`, it queries `agy-switch --status-json`, picks the account with highest remaining quota, and executes `agy-switch --switch <account> --no-restart` to resume coding without user interruption.
+- **Project Isolation**: Automatically verifies that workspace prompts are routed to the project's designated payer account.
+
 
 ---
 
