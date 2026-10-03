@@ -3,11 +3,12 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20%7C%20macOS%20%7C%20Linux-brightgreen.svg)]()
 [![Antigravity](https://img.shields.io/badge/Antigravity-2.0%2B-cyan.svg)]()
+[![ChatGPT Desktop](https://img.shields.io/badge/ChatGPT%20Desktop-Codex%20Pro-00f0ff.svg)]()
 [![UI Design](https://img.shields.io/badge/Design-iOS%20Liquid%20Glass-purple.svg)]()
 [![Languages](https://img.shields.io/badge/Languages-EN%20%7C%20ES%20%7C%20FA%20%7C%20ZH-orange.svg)]()
 [![Organization](https://img.shields.io/badge/Organization-mad--helpers-blueviolet.svg)](https://github.com/mad-helpers)
 
-> **Super-fast 1-click Google Account Switcher, Concurrent Dual-Instance Runner, Real-Time Quota HUD, and AI Project & Chat Migration Suite for Google Antigravity.**  
+> **Super-fast 1-click Google Account Switcher, Concurrent Dual-Instance Runner, Real-Time Quota HUD, and AI Project & Chat Migration Suite for Google Antigravity & ChatGPT Desktop / Codex.**  
 > Crafted with Apple iOS Liquid Glass aesthetics, fluid 60fps spring physics, and multi-language support (English, Spanish, Persian, Chinese).
 
 <p align="center">
@@ -25,8 +26,9 @@
 ## 🌟 Quick Navigation / Navegación Rápida
 
 - [English (🇬🇧 Overview & Features)](#-english)
+- [ChatGPT Desktop & Codex Suite (🤖 UI & Auth Center)](#-chatgpt-desktop--openai-codex-suite)
 - [Español (🇪🇸 Descripción y Características)](#-español)
-- [فارسی (🇮🇷 راهنما و مستندات فارسی)](#-فارسی)
+- [فارسی (🇮🇷 مستندات جامع فارسی)](README_FA.md)
 - [简体中文 (🇨🇳 概述与使用指南)](#-简体中文)
 - [Installation & Quick Start](#-installation)
 - [CLI Reference](#-cli-commands)
@@ -105,6 +107,44 @@ Switching between multiple Google accounts on **Google Antigravity** can be tedi
 
 10. ⌨️ **Global Terminal CLI Utilities (`agy-quota` & `agy-switch`)**:
     - Real-time colored progress meters, per-model reset countdowns, JSON output for automation, and scriptable credential control directly from PowerShell and Bash.
+
+---
+
+## 🤖 ChatGPT Desktop & OpenAI Codex Suite
+
+A dedicated, comprehensive companion enhancement suite tailored for the official **ChatGPT Desktop** app and the **OpenAI Codex** ecosystem:
+
+### 1. 🧭 Draggable In-App Floating Action HUD Pill
+- A sleek, glassmorphic floating action bar docked dynamically to the top right of ChatGPT Desktop.
+- Free-form drag and drop anywhere across your screen with automatic coordinate persistence in `localStorage`.
+- Quick-access controls:
+  - `➕ New Chat`: Opens an instant conversation canvas (`Ctrl+Shift+O`).
+  - `🔄 Accounts`: Opens the profile management and 1-click account switching drawer.
+  - `🔐 Login`: Direct entry point for OpenAI OAuth, isolated instances, API keys, and sign-outs.
+  - `🎨 Themes & Fonts`: Fine-tunes offline typography, color palettes, and single-card borders.
+
+### 2. 🔐 Authentication & Profile Center
+- **🌐 Browser OAuth Login (`codex login`)**: Seamlessly launches your system's default browser to authenticate against OpenAI's official identity provider and syncs credentials into Codex daemon with zero manual copy-pasting.
+- **🚀 Concurrent Dual-Instance (`Instance 2`)**: Launches an isolated ChatGPT window with independent `--user-data-dir` for working on secondary or team accounts simultaneously.
+- **🔑 Developer API Key Login (`codex login --with-api-key`)**: Authenticate directly with an OpenAI API key (`sk-...`).
+- **🚪 Safe Session Sign-Out (`/api/chatgpt/logout`)**: Safely removes stored credentials and resets session state without damaging app installations.
+
+### 3. 🔲 Refined Single-Card Composer Box
+- Solves the visual clutter and nested border stacking issues in default ChatGPT Desktop builds.
+- Refactored layout styling provides a unified single-card composer frame with smooth 20px curvature, refined 1px border hierarchy, and a subtle glowing focus ring.
+
+### 4. ✍️ Offline Base64 Typography (Zero CDN / Zero CSP Dependencies)
+- Fully embedded offline WOFF2 fonts:
+  - **Latin / English**: **Outfit** (modern geometric Apple-inspired aesthetic), Inter, and JetBrains Mono.
+  - **Persian / Arabic (RTL)**: **Vazirmatn** and **Estedad** with crisp rendering.
+- **Intelligent BiDi Text Processor**: Automatic RTL alignment on Persian text blocks while strictly preserving LTR direction for code blocks (`<pre>`, `<code>`) and KaTeX math formulas (`.katex`).
+
+### 5. 🎨 Curated Design Palettes
+- ⚡️ **Cyberpunk Neon**: `#00f0ff` cyan accent with crystal obsidian background.
+- 🖤 **Pure AMOLED**: Deep true-black `#000000` with subtle glass borders.
+- 🌌 **Midnight Indigo**: Indigo `#818cf8` glow with atmospheric depth.
+- 🟢 **Emerald Matrix**: Vivid `#10b981` cyber-green.
+- ⚪️ **Modern Dark Slate**: Clean `#38bdf8` slate with minimal contrast.
 
 ---
 

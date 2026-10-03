@@ -1234,11 +1234,9 @@ class SwitcherHTTPHandler(SimpleHTTPRequestHandler):
                         pass
                 if not inst_acc or inst_acc not in saved:
                     # Match by instance_id in saved manifest
-                    inst_acc = next((k for k, v in saved.items() if v.get('instance_id') == f"instance_{slot_idx}"), None)
-                if not inst_acc and slot_idx == 4 and 'nabistudii0@gmail.com' in saved:
-                    inst_acc = 'nabistudii0@gmail.com'
                 if not inst_acc:
-                    inst_acc = next((k for k in saved.keys() if k != 'madgod.cum@gmail.com'), None)
+                    primary = get_primary_account()
+                    inst_acc = next((k for k in saved.keys() if k != primary), None)
 
                 entry = saved.get(inst_acc, {}) if inst_acc else {}
                 tok_file = entry.get('token_file', '')
@@ -1296,6 +1294,26 @@ class SwitcherHTTPHandler(SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps(load_user_settings(), ensure_ascii=False).encode('utf-8'))
+        elif parsed.path == '/api/chatgpt/status':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            import chatgpt_account_manager as cpm
+            meta = cpm.list_profiles()
+            settings = cpm.load_settings()
+            self.wfile.write(json.dumps({'status': 'ok', 'profiles': meta, 'settings': settings}, ensure_ascii=False).encode('utf-8'))
+        elif parsed.path == '/api/chatgpt/launch':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            qs = urllib.parse.parse_qs(parsed.query)
+            inst = int(qs.get('instance', ['1'])[0])
+            new_win = qs.get('new_window', ['0'])[0] in ('1', 'true')
+            import chatgpt_account_manager as cpm
+            ok, msg = cpm.launch_chatgpt(instance_num=inst, new_window=new_win)
+            self.wfile.write(json.dumps({'success': ok, 'message': msg}, ensure_ascii=False).encode('utf-8'))
         elif parsed.path in ('/api/launch_dual', '/api/launch_instance'):
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
@@ -1398,6 +1416,37 @@ class SwitcherHTTPHandler(SimpleHTTPRequestHandler):
             acc = data.get('account')
             act = data.get('action', 'add')
             resp = migration_engine.assign_conversation_account(c_id, acc, action=act)
+        elif self.path == '/api/chatgpt/switch':
+            import chatgpt_account_manager as cpm
+            profile_id = data.get('profile_id') or data.get('profileId')
+            if profile_id:
+                ok, msg = cpm.switch_profile(profile_id)
+                resp = {'success': ok, 'message': msg}
+            else:
+                resp = {'success': False, 'error': 'Missing profile_id'}
+        elif self.path == '/api/chatgpt/save_profile':
+            import chatgpt_account_manager as cpm
+            p_id = data.get('profile_id') or data.get('profileId')
+            name = data.get('display_name') or data.get('name')
+            if p_id:
+                ok, res = cpm.save_current_profile(p_id, display_name=name)
+                resp = {'success': ok, 'data': res}
+            else:
+                resp = {'success': False, 'error': 'Missing profile_id'}
+        elif self.path == '/api/chatgpt/settings':
+            import chatgpt_account_manager as cpm
+            ok, res = cpm.save_settings(data)
+            resp = {'success': ok, 'settings': res}
+        elif self.path == '/api/chatgpt/login':
+            import chatgpt_account_manager as cpm
+            mode = data.get('mode', 'oauth')
+            api_key = data.get('api_key')
+            ok, msg = cpm.trigger_codex_login(mode=mode, api_key=api_key)
+            resp = {'success': ok, 'message': msg}
+        elif self.path == '/api/chatgpt/logout':
+            import chatgpt_account_manager as cpm
+            ok, msg = cpm.trigger_codex_logout()
+            resp = {'success': ok, 'message': msg}
 
         self.send_response(200)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
@@ -1461,7 +1510,7 @@ def launch_gui(port=PORT):
 
 if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] in ('--launch', '--launch-instance', '--focus'):
-        target = sys.argv[2] if len(sys.argv) > 2 else 'nabistudii0@gmail.com'
+        target = sys.argv[2] if len(sys.argv) > 2 else get_secondary_account()
         res = launch_dual_instance(target)
         print(f"Multi-instance launch result for {target}: {res}")
         sys.exit(0 if res.get('success') else 1)

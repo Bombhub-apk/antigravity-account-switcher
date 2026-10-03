@@ -84,7 +84,17 @@ const translations = {
     taskToggleSuccess: "Task state updated successfully.",
     taskPermissionDenied: "Permission denied: Task belongs to primary account and is isolated from Account 2.",
     filterByProject: "Filter by Project:",
-    allProjects: "All Projects"
+    allProjects: "All Projects",
+    chatgptHubTitle: "ChatGPT Desktop & Codex Hub",
+    chatgptHubDesc: "Persian fonts (Vazirmatn, Estedad), themes (Cyber, AMOLED), multi-account switching, and new window controls.",
+    chatgptActiveProfileLabel: "Active ChatGPT Profile:",
+    chatgptSwitchBtn: "🔄 Switch Account",
+    chatgptSaveBtn: "💾 Save Profile",
+    chatgptLaunchInst1: "🚀 Launch ChatGPT",
+    chatgptLaunchInst2: "👥 Dual Account 2",
+    chatgptNewWin: "➕ New Window",
+    chatgptLoginBtn: "🔐 Login",
+    chatgptThemeBtn: "🎨 Themes & Fonts"
   },
   fa: {
     dir: "rtl",
@@ -168,7 +178,17 @@ const translations = {
     taskToggleSuccess: "وضعیت تسک با موفقیت به‌روزرسانی شد.",
     taskPermissionDenied: "مجوز رد شد: این تسک متعلق به اکانت اصلی (مدگاد) است و در اکانت دوم ایزوله است.",
     filterByProject: "فیلتر بر اساس پروژه:",
-    allProjects: "همه پروژه‌ها"
+    allProjects: "همه پروژه‌ها",
+    chatgptHubTitle: "مرکز مدیریت ChatGPT دسکتاپ و Codex",
+    chatgptHubDesc: "فونت‌های فارسی (وزیرمتن، استعداد و...)، پوسته‌های رنگی، سوئیچ چند اکانت و ساخت صفحه جدید.",
+    chatgptActiveProfileLabel: "اکانت فعال چت‌جی‌پی‌تی:",
+    chatgptSwitchBtn: "🔄 سوئیچ اکانت",
+    chatgptSaveBtn: "💾 ذخیره اکانت",
+    chatgptLaunchInst1: "🚀 اجرای چت‌جی‌پی‌تی",
+    chatgptLaunchInst2: "👥 اکانت ۲ (پنجره همزمان)",
+    chatgptNewWin: "➕ صفحه / چت جدید",
+    chatgptLoginBtn: "🔐 ورود / لاگین",
+    chatgptThemeBtn: "🎨 تم و فونت"
   },
   zh: {
     dir: "ltr",

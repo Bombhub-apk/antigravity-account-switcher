@@ -27,6 +27,7 @@ let state = {
 document.addEventListener('DOMContentLoaded', () => {
   detectInitialLanguage();
   initApplication();
+  initChatgptSection();
   startCountdownTicker();
 });
 
@@ -965,3 +966,178 @@ function startCountdownTicker() {
     }
   }, 1000);
 }
+
+// ==========================================
+// ChatGPT Desktop & Codex Hub Controller
+// ==========================================
+
+async function initChatgptSection() {
+  try {
+    const res = await fetch('/api/chatgpt/status').then(r => r.json()).catch(() => null);
+    if (!res || !res.profiles) return;
+
+    const select = document.getElementById('chatgptProfileSelect');
+    if (!select) return;
+
+    select.innerHTML = '';
+    const profiles = res.profiles.profiles || [];
+    const activeId = res.profiles.active_profile || 'default';
+
+    profiles.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = `${p.display_name} (${p.email || 'No Email'})`;
+      if (p.id === activeId) opt.selected = true;
+      select.appendChild(opt);
+    });
+
+    const badge = document.getElementById('chatgptActiveBadge');
+    if (badge) {
+      badge.textContent = `Codex: ${activeId.toUpperCase()}`;
+    }
+  } catch (e) {
+    console.error('Failed to init ChatGPT section:', e);
+  }
+}
+
+async function executeSwitchChatgptProfile() {
+  const select = document.getElementById('chatgptProfileSelect');
+  if (!select) return;
+  const profileId = select.value;
+  if (!profileId) return;
+
+  try {
+    const res = await fetch('/api/chatgpt/switch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile_id: profileId })
+    }).then(r => r.json());
+
+    if (res.success) {
+      alert(currentLang === 'fa' ? `اکانت چت‌جی‌پی‌تی با موفقیت به «${profileId}» تغییر یافت.` : `Switched ChatGPT profile to ${profileId}.`);
+      initChatgptSection();
+    } else {
+      alert(`Error: ${res.error || res.message}`);
+    }
+  } catch (e) {
+    alert(`Failed to switch profile: ${e.message}`);
+  }
+}
+
+async function executeSaveChatgptProfile() {
+  const name = prompt(currentLang === 'fa' ? 'نام یا عنوان نمایشی این اکانت را وارد کنید:' : 'Enter a display name for this account profile:');
+  if (!name) return;
+
+  const pId = name.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+  try {
+    const res = await fetch('/api/chatgpt/save_profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile_id: pId, display_name: name })
+    }).then(r => r.json());
+
+    if (res.success) {
+      alert(currentLang === 'fa' ? 'پروفایل اکانت با موفقیت ذخیره شد!' : 'Account profile saved successfully!');
+      initChatgptSection();
+    } else {
+      alert(`Error: ${res.error || 'Failed to save'}`);
+    }
+  } catch (e) {
+    alert(`Failed to save profile: ${e.message}`);
+  }
+}
+
+async function executeLaunchChatgpt(instanceNum, newWindow = false) {
+  try {
+    const res = await fetch(`/api/chatgpt/launch?instance=${instanceNum}&new_window=${newWindow ? 1 : 0}`).then(r => r.json());
+    if (res.success) {
+      const msg = currentLang === 'fa' ? `پنجره ChatGPT (اینستنس ${instanceNum}) با استایل و پورت DevTools اجرا شد.` : `Launched ChatGPT instance ${instanceNum}.`;
+      console.log(msg);
+    }
+  } catch (e) {
+    alert(`Failed to launch ChatGPT: ${e.message}`);
+  }
+}
+
+async function executeLoginChatgpt() {
+  try {
+    const res = await fetch('/api/chatgpt/login?mode=oauth').then(r => r.json());
+    if (res.success) {
+      alert(currentLang === 'fa' ? 'صفحه لاگین رسمی OpenAI در مرورگر باز شد. پس از تکمیل لاگین، سشن فعال خواهد شد.' : 'OpenAI official login opened in browser.');
+    } else {
+      alert(res.message || 'Login failed');
+    }
+  } catch(e) {
+    alert(`Failed to launch login: ${e.message}`);
+  }
+}
+
+function openChatgptThemeModal() {
+  const existing = document.getElementById('chatgptThemeModal');
+  if (existing) existing.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'chatgptThemeModal';
+  modal.className = 'modal-overlay active';
+  modal.style.display = 'flex';
+  modal.style.alignItems = 'center';
+  modal.style.justifyContent = 'center';
+
+  modal.innerHTML = `
+    <div class="modal-sheet" style="max-width: 440px; padding: 24px;">
+      <div class="modal-header">
+        <h3 style="margin: 0; font-size: 16px; color: #00f0ff;">🎨 ${currentLang === 'fa' ? 'تنظیمات تم و فونت ChatGPT Desktop' : 'ChatGPT Desktop Theme & Fonts'}</h3>
+        <button class="modal-close-btn" onclick="document.getElementById('chatgptThemeModal').remove()">✕</button>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 14px; margin-top: 16px;">
+        <div>
+          <label style="font-size: 12px; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 5px;">${currentLang === 'fa' ? 'فونت فارسی:' : 'Persian Font:'}</label>
+          <select id="chatgptFontFaSelect" class="lang-select" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm);">
+            <option value="Vazirmatn">وزیرمتن (Vazirmatn)</option>
+            <option value="Estedad">استعداد (Estedad)</option>
+            <option value="Sahel">ساحل (Sahel)</option>
+            <option value="Shabnam">شبنم (Shabnam)</option>
+            <option value="Samim">صمیم (Samim)</option>
+            <option value="default">${currentLang === 'fa' ? 'پیش‌فرض سیستم' : 'System Default'}</option>
+          </select>
+        </div>
+
+        <div>
+          <label style="font-size: 12px; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 5px;">${currentLang === 'fa' ? 'پوسته و تم رنگی:' : 'Color Theme:'}</label>
+          <select id="chatgptThemeSelect" class="lang-select" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm);">
+            <option value="cyber">⚡️ سایبرپانک نئون (Cyberpunk)</option>
+            <option value="amoled">🖤 آمولد بلک (AMOLED Black)</option>
+            <option value="midnight">🌌 میدنایت گلس (Midnight Glass)</option>
+            <option value="emerald">🟢 ماتریکس زمردی (Emerald Matrix)</option>
+            <option value="crimson">🌹 مخمل زرشکی (Crimson Velvet)</option>
+            <option value="default">⚪️ پیش‌فرض چت‌جی‌پی‌تی (Default)</option>
+          </select>
+        </div>
+
+        <button class="btn btn-primary" onclick="saveChatgptThemeSettings()" style="margin-top: 8px; width: 100%;">
+          ${currentLang === 'fa' ? 'ذخیره و اعمال تنظیمات' : 'Save & Apply Settings'}
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+}
+
+async function saveChatgptThemeSettings() {
+  const font = document.getElementById('chatgptFontFaSelect').value;
+  const theme = document.getElementById('chatgptThemeSelect').value;
+
+  try {
+    await fetch('/api/chatgpt/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fontFa: font, theme: theme })
+    });
+    alert(currentLang === 'fa' ? 'تنظیمات با موفقیت ذخیره شد و روی چت‌جی‌پی‌تی اعمال می‌گردد.' : 'Settings saved and applied to ChatGPT.');
+    document.getElementById('chatgptThemeModal')?.remove();
+  } catch (e) {
+    alert(`Failed to save settings: ${e.message}`);
+  }
+}
+

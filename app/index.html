@@ -140,6 +140,58 @@
       </div>
     </section>
 
+    <!-- ChatGPT Desktop & Codex Enhanced Section -->
+    <section class="liquid-card" style="margin-top: 18px; border: 1px solid rgba(0,240,255,0.3); background: rgba(0,240,255,0.03);">
+      <div style="display:flex; align-items:center; justify-content:space-between;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div style="width:36px; height:36px; border-radius:10px; background:rgba(0,240,255,0.15); border:1px solid rgba(0,240,255,0.3); display:flex; align-items:center; justify-content:center; font-size:18px;">
+            🤖
+          </div>
+          <div>
+            <h3 data-i18n="chatgptHubTitle" style="font-size:14.5px; font-weight:700; margin:0; color:#38bdf8;">ChatGPT Desktop & Codex Hub</h3>
+            <p data-i18n="chatgptHubDesc" style="font-size:11.5px; color:var(--text-muted); margin-top:2px; line-height:1.4;">
+              Persian fonts (Vazirmatn, Estedad), themes (Cyber, AMOLED), multi-account switching, and new window controls.
+            </p>
+          </div>
+        </div>
+        <span id="chatgptActiveBadge" class="tier-badge pro" style="font-size:11px; padding:3px 10px; border-radius:9999px;">Codex Ready</span>
+      </div>
+
+      <!-- Account Selection & Quick Launch -->
+      <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.06);">
+        <div style="flex:1; min-width:200px;">
+          <label style="font-size:11.5px; font-weight:600; color:var(--text-muted); display:block; margin-bottom:5px;" data-i18n="chatgptActiveProfileLabel">Active ChatGPT Profile:</label>
+          <select id="chatgptProfileSelect" class="lang-select" style="width:100%; border-radius:var(--radius-sm); padding:8px 12px; font-size:12.5px;">
+            <!-- Populated dynamically -->
+          </select>
+        </div>
+
+        <div style="display:flex; flex-wrap:wrap; gap:8px;">
+          <button class="btn btn-primary" onclick="executeSwitchChatgptProfile()" style="padding: 7px 12px; font-size: 12.5px;" title="Switch Active Account">
+            <span data-i18n="chatgptSwitchBtn">🔄 Switch Account</span>
+          </button>
+          <button class="btn btn-glass" onclick="executeSaveChatgptProfile()" style="padding: 7px 12px; font-size: 12.5px;" title="Save current session as new profile">
+            <span data-i18n="chatgptSaveBtn">💾 Save Profile</span>
+          </button>
+          <button class="btn btn-primary" onclick="executeLaunchChatgpt(1)" style="padding: 7px 14px; font-size: 12.5px; background:linear-gradient(135deg, #0284c7, #0369a1);">
+            <span data-i18n="chatgptLaunchInst1">🚀 Launch ChatGPT</span>
+          </button>
+          <button class="btn btn-glass" onclick="executeLaunchChatgpt(2)" style="padding: 7px 12px; font-size: 12.5px; border-color:rgba(168,85,247,0.4); color:#c084fc;">
+            <span data-i18n="chatgptLaunchInst2">👥 Dual Account 2</span>
+          </button>
+          <button class="btn btn-glass" onclick="executeLaunchChatgpt(1, true)" style="padding: 7px 12px; font-size: 12.5px;">
+            <span data-i18n="chatgptNewWin">➕ New Window</span>
+          </button>
+          <button class="btn btn-glass" onclick="executeLoginChatgpt()" style="padding: 7px 12px; font-size: 12.5px; border-color:rgba(0,240,255,0.4); color:#00f0ff;" title="Open Login Flow">
+            <span data-i18n="chatgptLoginBtn">🔐 Login</span>
+          </button>
+          <button class="btn btn-glass" onclick="openChatgptThemeModal()" style="padding: 7px 12px; font-size: 12.5px; border-color:rgba(0,240,255,0.4); color:#00f0ff;">
+            <span data-i18n="chatgptThemeBtn">🎨 Themes & Fonts</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
     <!-- Saved Accounts Section -->
     <section>
       <div class="section-head">

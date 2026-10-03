@@ -736,6 +736,7 @@ class QuotaHttpHandler(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', '*')
+        self.send_header('Access-Control-Allow-Private-Network', 'true')
         self.send_header('Connection', 'close')
         self.end_headers()
 
@@ -915,6 +916,52 @@ class QuotaHttpHandler(BaseHTTPRequestHandler):
                 self.send_header('Connection', 'close')
                 self.end_headers()
                 self.wfile.write(json.dumps(payload, ensure_ascii=False).encode('utf-8'))
+            elif self.path == '/api/chatgpt/status':
+                import chatgpt_account_manager as cpm
+                meta = cpm.list_profiles()
+                settings = cpm.load_settings()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.send_header('Connection', 'close')
+                self.end_headers()
+                self.wfile.write(json.dumps({'status': 'ok', 'profiles': meta, 'settings': settings}, ensure_ascii=False).encode('utf-8'))
+            elif self.path.startswith('/api/chatgpt/launch'):
+                import chatgpt_account_manager as cpm
+                import urllib.parse
+                parsed = urllib.parse.urlparse(self.path)
+                qs = urllib.parse.parse_qs(parsed.query)
+                inst = int(qs.get('instance', ['1'])[0])
+                new_win = qs.get('new_window', ['0'])[0] in ('1', 'true')
+                ok, msg = cpm.launch_chatgpt(instance_num=inst, new_window=new_win)
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.send_header('Connection', 'close')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': ok, 'message': msg}, ensure_ascii=False).encode('utf-8'))
+            elif self.path.startswith('/api/chatgpt/login'):
+                import chatgpt_account_manager as cpm
+                import urllib.parse
+                parsed = urllib.parse.urlparse(self.path)
+                qs = urllib.parse.parse_qs(parsed.query)
+                mode = qs.get('mode', ['oauth'])[0]
+                ok, msg = cpm.trigger_codex_login(mode=mode)
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.send_header('Connection', 'close')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': ok, 'message': msg}, ensure_ascii=False).encode('utf-8'))
+            elif self.path == '/api/chatgpt/logout':
+                import chatgpt_account_manager as cpm
+                ok, msg = cpm.trigger_codex_logout()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.send_header('Connection', 'close')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': ok, 'message': msg}, ensure_ascii=False).encode('utf-8'))
             else:
                 self.send_response(404)
                 self.send_header('Connection', 'close')
@@ -1097,6 +1144,31 @@ class QuotaHttpHandler(BaseHTTPRequestHandler):
                     data.get('account'),
                     action=data.get('action', 'add')
                 )
+            elif self.path == '/api/chatgpt/switch':
+                import chatgpt_account_manager as cpm
+                prof = data.get('profile') or data.get('profile_id')
+                ok, msg = cpm.switch_profile(prof)
+                resp = {'success': ok, 'message': msg}
+            elif self.path == '/api/chatgpt/save_profile':
+                import chatgpt_account_manager as cpm
+                prof_id = data.get('id') or data.get('profile_id')
+                disp_name = data.get('name') or data.get('display_name')
+                ok, res = cpm.save_current_profile(prof_id, display_name=disp_name)
+                resp = {'success': ok, 'profile': res}
+            elif self.path == '/api/chatgpt/settings':
+                import chatgpt_account_manager as cpm
+                ok, s = cpm.save_settings(data)
+                resp = {'success': ok, 'settings': s}
+            elif self.path == '/api/chatgpt/login':
+                import chatgpt_account_manager as cpm
+                mode = data.get('mode', 'oauth')
+                api_key = data.get('api_key')
+                ok, msg = cpm.trigger_codex_login(mode=mode, api_key=api_key)
+                resp = {'success': ok, 'message': msg}
+            elif self.path == '/api/chatgpt/logout':
+                import chatgpt_account_manager as cpm
+                ok, msg = cpm.trigger_codex_logout()
+                resp = {'success': ok, 'message': msg}
             
             if isinstance(resp, dict) and resp.get('success'):
                 broadcast_all_instances()
@@ -1634,6 +1706,20 @@ def daemon_loop():
     t_cdp.start()
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [CDP] Native CDP supervisor thread started.", flush=True)
 
+    # Start ChatGPT & Codex CDP injector thread
+    try:
+        import chatgpt_cdp_daemon
+        def _run_chatgpt_cdp():
+            try:
+                asyncio.run(chatgpt_cdp_daemon.daemon_loop())
+            except Exception as ex:
+                pass
+        t_cpe = threading.Thread(target=_run_chatgpt_cdp, daemon=True)
+        t_cpe.start()
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [CDP] ChatGPT & Codex CDP supervisor thread started.", flush=True)
+    except Exception as e:
+        pass
+
     # Refresh tokens for all saved accounts on startup
     try:
         refresh_all_accounts_tokens()
@@ -1650,6 +1736,35 @@ def daemon_loop():
     last_heartbeat_time = time.time()
     last_injected_port = None
     last_verify_time = 0
+    last_chatgpt_relaunch_ts = 0
+
+    def supervise_chatgpt_desktop():
+        nonlocal last_chatgpt_relaunch_ts
+        now_ts = time.time()
+        # Check if ChatGPT process is active
+        is_running = False
+        try:
+            import psutil
+            for p in psutil.process_iter(['name']):
+                if 'chatgpt' in (p.info.get('name') or '').lower():
+                    is_running = True
+                    break
+        except Exception:
+            pass
+
+        if is_running:
+            # Check if DevTools port 9223 is listening
+            port_open = False
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(0.3)
+                    port_open = (s.connect_ex(('127.0.0.1', 9223)) == 0)
+            except Exception:
+                port_open = False
+
+            if not port_open:
+                # Do not aggressively kill running ChatGPT instances
+                pass
 
     while True:
         time.sleep(3)
@@ -1672,7 +1787,13 @@ def daemon_loop():
         except Exception:
             pass
 
-        # 2. Passive keepalive heartbeat and token refresh every 15 minutes (900 seconds)
+        # 2. Supervise ChatGPT desktop instance (auto-restart with DevTools port if opened normally)
+        try:
+            supervise_chatgpt_desktop()
+        except Exception:
+            pass
+
+        # 3. Passive keepalive heartbeat and token refresh every 15 minutes (900 seconds)
         if now - last_heartbeat_time >= 900:
             last_heartbeat_time = now
             try:

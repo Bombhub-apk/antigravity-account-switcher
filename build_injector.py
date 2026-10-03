@@ -1,0 +1,1414 @@
+import base64
+from pathlib import Path
+
+HOME = Path.home()
+FONTS_DIR = HOME / ".gemini" / "antigravity" / "bin" / "assets" / "fonts"
+LOCAL_FONTS = Path(__file__).resolve().parent / "assets" / "fonts"
+
+def resolve_font(filename):
+    for d in [FONTS_DIR, LOCAL_FONTS]:
+        p = d / filename
+        if p.exists():
+            return p
+    return FONTS_DIR / filename
+
+vazir_file = resolve_font("Vazirmatn[wght].woff2")
+estedad_file = resolve_font("Estedad[wght].woff2")
+outfit_file = resolve_font("Outfit[wght].woff2")
+
+vazir_b64 = base64.b64encode(vazir_file.read_bytes()).decode('ascii') if vazir_file.exists() else ""
+estedad_b64 = base64.b64encode(estedad_file.read_bytes()).decode('ascii') if estedad_file.exists() else ""
+outfit_b64 = base64.b64encode(outfit_file.read_bytes()).decode('ascii') if outfit_file.exists() else ""
+
+print(f"Vazirmatn b64: {len(vazir_b64)} chars")
+print(f"Estedad b64: {len(estedad_b64)} chars")
+print(f"Outfit b64: {len(outfit_b64)} chars")
+
+template = '''// ChatGPT Desktop & Codex Enhanced UI Suite (Ultimate Persian & Modern Glass)
+// Integrated with Antigravity Account Switcher, Local WOFF2 Fonts (Outfit + Vazirmatn + Estedad), Draggable HUD & KaTeX Math Protection
+
+(() => {
+  window.__cpe_initialized = true;
+
+  // Cleanup legacy or conflicting style tags if any
+  ['cpe-vazir-base64', 'cpe-test-fix'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.remove();
+  });
+
+  // 1. Embedded Base64 Offline WOFF2 Fonts (Zero CDN dependencies, immune to CSP & filtering)
+  const VAZIRMATN_B64 = "__VAZIR_B64__";
+  const ESTEDAD_B64 = "__ESTEDAD_B64__";
+  const OUTFIT_B64 = "__OUTFIT_B64__";
+
+  function injectBase64Fonts() {
+    let fontStyle = document.getElementById('cpe-embedded-fonts');
+    if (!fontStyle) {
+      fontStyle = document.createElement('style');
+      fontStyle.id = 'cpe-embedded-fonts';
+      (document.head || document.documentElement).appendChild(fontStyle);
+    }
+    fontStyle.textContent = `
+      @font-face {
+        font-family: 'Outfit';
+        font-style: normal;
+        font-weight: 100 900;
+        font-display: swap;
+        src: url('data:font/woff2;base64,${OUTFIT_B64}') format('woff2');
+      }
+      @font-face {
+        font-family: 'Vazirmatn';
+        font-style: normal;
+        font-weight: 100 900;
+        font-display: swap;
+        src: url('data:font/woff2;base64,${VAZIRMATN_B64}') format('woff2');
+      }
+      @font-face {
+        font-family: 'Estedad';
+        font-style: normal;
+        font-weight: 100 900;
+        font-display: swap;
+        src: url('data:font/woff2;base64,${ESTEDAD_B64}') format('woff2');
+      }
+    `;
+
+    if (document.fonts) {
+      try { document.fonts.load('16px Outfit'); } catch(e) {}
+      try { document.fonts.load('16px Vazirmatn'); } catch(e) {}
+      try { document.fonts.load('16px Estedad'); } catch(e) {}
+    }
+  }
+  injectBase64Fonts();
+
+  // 2. Settings Management
+  const STORAGE_KEY = 'cpe_chatgpt_suite_settings';
+  const DEFAULT_SETTINGS = {
+    fontFa: 'Vazirmatn',
+    fontEn: 'Outfit',
+    theme: 'cyber',
+    strokeMode: 'refined',
+    rtlAuto: true,
+    fontSize: 15
+  };
+
+  function loadSettings() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+      const s = { ...DEFAULT_SETTINGS, ...saved };
+      // Default to Outfit if fontEn was never selected or was empty
+      if (!s.fontEn || s.fontEn === 'default') {
+        s.fontEn = 'Outfit';
+      }
+      return s;
+    } catch (e) {
+      return DEFAULT_SETTINGS;
+    }
+  }
+
+  function saveSettings(patch) {
+    const current = loadSettings();
+    const updated = { ...current, ...patch };
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    } catch (e) {}
+
+    // Sync to Python daemon
+    for (const port of [39281, 39285]) {
+      fetch(`http://127.0.0.1:${port}/api/chatgpt/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch)
+      }).catch(() => {});
+    }
+
+    applyThemeAndFont();
+    return updated;
+  }
+
+  // 3. Design Tokens & Color Palettes
+  const THEMES = {
+    cyber: {
+      name: '⚡️ سایبرپانک نئون (Cyberpunk Neon)',
+      accent: '#00f0ff',
+      accentGlow: '0 0 16px rgba(0, 240, 255, 0.45)',
+      accentSoft: 'rgba(0, 240, 255, 0.14)',
+      border: 'rgba(0, 240, 255, 0.28)',
+      bg: '#0a0e17',
+      bgGradient: 'radial-gradient(ellipse at 50% 0%, #111a2e 0%, #080c14 70%)',
+      sidebar: '#060910',
+      card: '#101726',
+      cardBorder: 'rgba(0, 240, 255, 0.22)',
+      composerBg: 'rgba(15, 23, 42, 0.94)',
+      text: '#f1f5f9'
+    },
+    amoled: {
+      name: '🖤 آمولد بلک و شیشه‌ای (Pure AMOLED & Glass)',
+      accent: '#38bdf8',
+      accentGlow: '0 0 14px rgba(56, 189, 248, 0.35)',
+      accentSoft: 'rgba(255, 255, 255, 0.08)',
+      border: 'rgba(255, 255, 255, 0.18)',
+      bg: '#000000',
+      bgGradient: '#000000',
+      sidebar: '#050505',
+      card: '#0d0d0d',
+      cardBorder: 'rgba(255, 255, 255, 0.16)',
+      composerBg: '#090909',
+      text: '#ffffff'
+    },
+    midnight: {
+      name: '🌌 میدنایت ایندیگو (Midnight Indigo)',
+      accent: '#818cf8',
+      accentGlow: '0 0 16px rgba(129, 140, 248, 0.45)',
+      accentSoft: 'rgba(99, 102, 241, 0.15)',
+      border: 'rgba(99, 102, 241, 0.25)',
+      bg: '#0b0f19',
+      bgGradient: 'radial-gradient(ellipse at 50% 0%, #171d33 0%, #090c14 70%)',
+      sidebar: '#080b13',
+      card: '#141a2e',
+      cardBorder: 'rgba(99, 102, 241, 0.22)',
+      composerBg: 'rgba(17, 24, 39, 0.94)',
+      text: '#f8fafc'
+    },
+    emerald: {
+      name: '🟢 ماتریکس زمردی (Emerald Matrix)',
+      accent: '#10b981',
+      accentGlow: '0 0 16px rgba(16, 185, 129, 0.45)',
+      accentSoft: 'rgba(16, 185, 129, 0.15)',
+      border: 'rgba(16, 185, 129, 0.25)',
+      bg: '#07100b',
+      bgGradient: 'radial-gradient(ellipse at 50% 0%, #0d2116 0%, #050b08 70%)',
+      sidebar: '#040a07',
+      card: '#0c1f14',
+      cardBorder: 'rgba(16, 185, 129, 0.22)',
+      composerBg: 'rgba(7, 22, 15, 0.94)',
+      text: '#ecfdf5'
+    },
+    clean_dark: {
+      name: '⚪️ دارک اسلیت مدرن (Modern Dark Slate)',
+      accent: '#38bdf8',
+      accentGlow: '0 0 14px rgba(56, 189, 248, 0.35)',
+      accentSoft: 'rgba(56, 189, 248, 0.12)',
+      border: 'rgba(255, 255, 255, 0.14)',
+      bg: '#111318',
+      bgGradient: 'radial-gradient(ellipse at 50% 0%, #1a1e26 0%, #0e1014 70%)',
+      sidebar: '#0c0e12',
+      card: '#181b22',
+      cardBorder: 'rgba(255, 255, 255, 0.12)',
+      composerBg: 'rgba(24, 27, 34, 0.94)',
+      text: '#f8fafc'
+    }
+  };
+
+  // 4. Dynamic Style Engine
+  let dynamicStyleEl = document.getElementById('cpe-dynamic-styles');
+  if (!dynamicStyleEl) {
+    dynamicStyleEl = document.createElement('style');
+    dynamicStyleEl.id = 'cpe-dynamic-styles';
+    (document.head || document.documentElement).appendChild(dynamicStyleEl);
+  }
+
+  function applyThemeAndFont() {
+    injectBase64Fonts();
+    const s = loadSettings();
+    const t = THEMES[s.theme] || THEMES.cyber;
+    
+    // Combine English (Latin) and Persian (Fa) fonts
+    const fontEnPart = (s.fontEn && s.fontEn !== 'system') ? `'${s.fontEn}', ` : '';
+    const fontFaPart = (s.fontFa && s.fontFa !== 'system') ? `'${s.fontFa}', ` : "'Vazirmatn', ";
+    const combinedFont = `${fontEnPart}${fontFaPart}sans-serif`;
+
+    // Stroke / Border Configuration
+    let strokeCSS = '';
+    if (s.strokeMode === 'refined') {
+      strokeCSS = `
+        /* User Message Card */
+        [data-message-author-role="user"] > div:first-child {
+          border: 1px solid ${t.cardBorder} !important;
+          box-shadow: 0 0 0 1px ${t.cardBorder}, 0 4px 20px rgba(0, 0, 0, 0.35) !important;
+        }
+        /* Sidebar Separator */
+        aside.app-shell-left-panel, #app-shell-sidebar {
+          border-right: 1px solid ${t.border} !important;
+        }
+        /* Single Unified Composer Box */
+        div[class*="_ComposerLayoutRoot_"] {
+          border: 1px solid ${t.border} !important;
+          border-radius: 20px !important;
+          box-shadow: 0 0 0 1px ${t.border}, 0 8px 32px rgba(0, 0, 0, 0.5) !important;
+        }
+        div[class*="_ComposerLayoutRoot_"]:focus-within {
+          border-color: ${t.accent} !important;
+          box-shadow: 0 0 0 1.5px ${t.accent}, 0 8px 32px rgba(0, 0, 0, 0.55), ${t.accentGlow} !important;
+        }
+      `;
+    } else if (s.strokeMode === 'subtle') {
+      strokeCSS = `
+        [data-message-author-role="user"] > div:first-child {
+          border: 1px solid rgba(255, 255, 255, 0.08) !important;
+          box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08) !important;
+        }
+        aside.app-shell-left-panel, #app-shell-sidebar {
+          border-right: 1px solid rgba(255, 255, 255, 0.06) !important;
+        }
+        div[class*="_ComposerLayoutRoot_"] {
+          border: 1px solid rgba(255, 255, 255, 0.14) !important;
+          border-radius: 20px !important;
+          box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14), 0 8px 24px rgba(0, 0, 0, 0.4) !important;
+        }
+        div[class*="_ComposerLayoutRoot_"]:focus-within {
+          border-color: rgba(255, 255, 255, 0.28) !important;
+          box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.28), 0 8px 24px rgba(0, 0, 0, 0.4) !important;
+        }
+      `;
+    } else if (s.strokeMode === 'glow') {
+      strokeCSS = `
+        [data-message-author-role="user"] > div:first-child {
+          border: 1px solid ${t.accentSoft} !important;
+          box-shadow: 0 0 0 1px ${t.accentSoft}, 0 0 14px ${t.accentSoft} !important;
+        }
+        aside.app-shell-left-panel, #app-shell-sidebar {
+          border-right: 1px solid ${t.border} !important;
+        }
+        div[class*="_ComposerLayoutRoot_"] {
+          border: 1px solid ${t.accent} !important;
+          box-shadow: 0 0 0 1.5px ${t.accent}, 0 0 20px ${t.accentGlow} !important;
+          border-radius: 20px !important;
+        }
+      `;
+    }
+
+    dynamicStyleEl.textContent = `
+      :root {
+        --cpe-font: ${combinedFont};
+        --cpe-font-size: ${s.fontSize}px;
+        --cpe-accent: ${t.accent};
+        --color-token-main-surface-primary: ${t.bg} !important;
+        --color-token-bg-primary: ${t.sidebar} !important;
+        --color-background-composer-action-bar: ${t.card} !important;
+      }
+
+      /* 1. Universal Typography Across Entire UI */
+      body,
+      aside,
+      nav,
+      main,
+      header,
+      #app-shell-sidebar,
+      .sidebar-navigation,
+      [class*="sidebar"],
+      [class*="LeftPanel"],
+      [class*="MainContent"],
+      [data-message-author-role],
+      .prose,
+      .ProseMirror,
+      [contenteditable="true"],
+      p,
+      span:not(.katex *):not(pre *):not(code *):not([class*="font-mono"]):not([class*="icon"]):not(svg *),
+      bdi,
+      h1, h2, h3, h4, h5, h6,
+      button:not(.katex *):not(pre *):not(code *):not([class*="icon"]),
+      input,
+      textarea,
+      label {
+        font-family: var(--cpe-font) !important;
+      }
+
+      /* 2. Reading Flow & Line Height */
+      [data-message-author-role="assistant"] p,
+      [data-message-author-role="user"] p,
+      .prose p,
+      .cpe-rtl-text {
+        line-height: 1.82 !important;
+        font-size: var(--cpe-font-size) !important;
+        letter-spacing: -0.012em !important;
+      }
+
+      /* 3. Background Theming */
+      main,
+      ._MainContentSurface_yl8z4_2,
+      [data-testid="conversation-turn-list"] {
+        background: ${t.bg} !important;
+        background-image: ${t.bgGradient} !important;
+      }
+
+      aside.app-shell-left-panel,
+      #app-shell-sidebar,
+      nav._Navigation_1uxfp_2 {
+        background-color: ${t.sidebar} !important;
+      }
+
+      /* 4. Message Bubble Elevation & Cards */
+      [data-message-author-role="user"] > div:first-child {
+        background: ${t.card} !important;
+        border-radius: 18px !important;
+        padding: 12px 18px !important;
+        color: ${t.text} !important;
+      }
+
+      [data-message-author-role="assistant"] {
+        color: ${t.text} !important;
+      }
+
+      /* 5. Precise Single-Container Chat Composer */
+      /* Completely kill borders, backgrounds and outlines on all outer wrapper strips */
+      div[class*="thread-scroll-container"],
+      div[class*="group/thread-scroll-layout"],
+      div[class*="pointer-events-none"][class*="inset-x-0"],
+      div[class*="pb-(--thread-composer-bottom-inset)"],
+      [data-thread-focus-mode] {
+        border: none !important;
+        border-top: none !important;
+        border-bottom: none !important;
+        border-left: none !important;
+        border-right: none !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        outline: none !important;
+      }
+
+      /* Single sleek card for the actual composer */
+      div[class*="_ComposerLayoutRoot_"] {
+        background: ${t.composerBg} !important;
+        backdrop-filter: blur(20px) !important;
+        -webkit-backdrop-filter: blur(20px) !important;
+        border-radius: 20px !important;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
+        overflow: hidden !important;
+      }
+
+      /* Inner input and elements remain completely borderless */
+      div[class*="_ComposerLayoutBody_"],
+      div[class*="_ComposerLayoutInput_"],
+      div[class*="_ComposerLayoutFooter_"],
+      div[class*="_AdaptiveFooterInput_"],
+      .ProseMirror {
+        border: none !important;
+        border-top: none !important;
+        border-bottom: none !important;
+        border-left: none !important;
+        border-right: none !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        outline: none !important;
+      }
+
+      .ProseMirror {
+        color: ${t.text} !important;
+        font-size: 15px !important;
+        line-height: 1.6 !important;
+      }
+
+      /* 6. File Mentions, Links & Diff Cards Matching Theme */
+      [class*="_Mention_"],
+      [class*="_TableCellFileLink_"],
+      a[class*="file"],
+      button[class*="file"],
+      [class*="file-pill"],
+      [class*="file-tag"] {
+        color: ${t.accent} !important;
+        background: ${t.accentSoft} !important;
+        border: 1px solid ${t.border} !important;
+        border-radius: 6px !important;
+        padding: 1px 7px !important;
+        font-family: 'JetBrains Mono', monospace !important;
+        font-size: 13px !important;
+        font-weight: 500 !important;
+        direction: ltr !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        text-decoration: none !important;
+        transition: all 0.15s ease !important;
+      }
+
+      [class*="_Mention_"]:hover,
+      [class*="_TableCellFileLink_"]:hover {
+        background: ${t.accent}25 !important;
+        border-color: ${t.accent} !important;
+      }
+
+      [class*="_Mention_"] [class*="_Label_"],
+      [class*="_TableCellFileLink_"] [class*="_Label_"] {
+        color: ${t.accent} !important;
+        font-family: 'JetBrains Mono', monospace !important;
+      }
+
+      /* Diff File Rows and Review Cards */
+      [class*="turn-diff-file-row"],
+      button[class*="turn-diff-file-row"] {
+        transition: background 0.15s ease !important;
+      }
+      button[class*="turn-diff-file-row"]:hover {
+        background: ${t.accentSoft} !important;
+      }
+      button[class*="turn-diff-file-row"] span[class*="truncate"],
+      button[class*="turn-diff-file-row"] span.text-default {
+        color: ${t.accent} !important;
+        font-family: 'JetBrains Mono', monospace !important;
+        font-size: 13px !important;
+        font-weight: 500 !important;
+      }
+      button[class*="turn-diff-file-row"] [class*="tabular-nums"] {
+        font-family: 'JetBrains Mono', monospace !important;
+      }
+
+      /* Inline Code Badges */
+      [class*="_InlineCode_"] {
+        color: ${t.accent} !important;
+        background: rgba(255, 255, 255, 0.08) !important;
+        border: 1px solid rgba(255, 255, 255, 0.12) !important;
+        border-radius: 5px !important;
+        padding: 1px 6px !important;
+        font-family: 'JetBrains Mono', monospace !important;
+        font-size: 13px !important;
+      }
+
+      /* 7. Sidebar Chat Item Polish */
+      #app-shell-sidebar a,
+      #app-shell-sidebar li,
+      .sidebar-navigation li {
+        transition: background 0.15s ease, color 0.15s ease;
+      }
+      #app-shell-sidebar a:hover,
+      #app-shell-sidebar li:hover {
+        background: rgba(255, 255, 255, 0.05) !important;
+        border-radius: 8px !important;
+      }
+
+      /* 8. Strict Monospace Code Protection */
+      pre, code, kbd, samp, 
+      .cm-editor, .cm-content,
+      [class*="font-mono"],
+      [class*="terminal"],
+      pre *, code * {
+        font-family: 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace !important;
+        direction: ltr !important;
+        text-align: left !important;
+        unicode-bidi: isolate !important;
+      }
+
+      pre {
+        background: #0d1117 !important;
+        border: 1px solid rgba(255, 255, 255, 0.12) !important;
+        border-radius: 12px !important;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4) !important;
+      }
+
+      /* 9. Strict Math / LaTeX / KaTeX Formula Protection */
+      .katex, .katex-display, .katex-html, span.katex, math, annotation {
+        direction: ltr !important;
+        text-align: left !important;
+        unicode-bidi: isolate !important;
+        font-family: KaTeX_Main, KaTeX_Math, 'Times New Roman', serif !important;
+      }
+      .katex-display {
+        display: block !important;
+        text-align: center !important;
+        margin: 1.2em 0 !important;
+        padding: 12px 18px !important;
+        background: rgba(255, 255, 255, 0.035) !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        border-radius: 12px !important;
+        overflow-x: auto !important;
+        overflow-y: hidden !important;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
+      }
+
+      /* 10. BiDi Text Alignment */
+      .cpe-rtl-text {
+        direction: rtl !important;
+        text-align: right !important;
+        font-family: var(--cpe-font) !important;
+      }
+      .cpe-ltr-text {
+        direction: ltr !important;
+        text-align: left !important;
+      }
+
+      /* 11. Accent Highlights */
+      .prose a {
+        color: ${t.accent} !important;
+      }
+      ::selection {
+        background: ${t.accent}40 !important;
+        color: #ffffff !important;
+      }
+
+      ${strokeCSS}
+
+      /* 12. Draggable Action HUD Pill */
+      #cpe-hud-pill {
+        position: fixed;
+        top: 14px;
+        right: 80px;
+        z-index: 999999;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 12px;
+        background: rgba(15, 23, 42, 0.88);
+        backdrop-filter: blur(24px);
+        -webkit-backdrop-filter: blur(24px);
+        border: 1px solid ${t.border};
+        border-radius: 9999px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55), ${t.accentGlow};
+        user-select: none;
+        font-family: var(--cpe-font);
+        transition: transform 0.15s ease, box-shadow 0.2s ease;
+        cursor: grab;
+      }
+
+      #cpe-hud-pill:hover {
+        border-color: ${t.accent};
+        box-shadow: 0 12px 36px rgba(0, 0, 0, 0.65), ${t.accentGlow};
+      }
+
+      #cpe-hud-pill:active {
+        cursor: grabbing;
+      }
+
+      .cpe-hud-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 5px 12px;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 9999px;
+        color: #f1f5f9;
+        font-size: 11.5px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.16s ease;
+        font-family: inherit;
+      }
+
+      .cpe-hud-btn:hover {
+        background: ${t.accentSoft};
+        color: ${t.accent};
+        border-color: ${t.accent};
+        transform: scale(1.03);
+      }
+
+      /* Modal Dialog */
+      .cpe-modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.72);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        z-index: 1000000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s ease;
+        font-family: var(--cpe-font);
+        direction: rtl;
+      }
+
+      .cpe-modal-overlay.cpe-open {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .cpe-modal-sheet {
+        width: 540px;
+        max-width: 94vw;
+        max-height: 86vh;
+        overflow-y: auto;
+        background: #0f172a;
+        border: 1px solid ${t.border};
+        border-radius: 22px;
+        padding: 22px;
+        box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8), ${t.accentGlow};
+        color: #f8fafc;
+        transform: scale(0.96);
+        transition: transform 0.2s ease;
+      }
+
+      .cpe-modal-overlay.cpe-open .cpe-modal-sheet {
+        transform: scale(1);
+      }
+    `;
+  }
+  window.__chatgpt_enhanced_apply_theme = applyThemeAndFont;
+
+  // 5. Intelligent BiDi & RTL Observer
+  const PERSIAN_REGEX = /[\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF]/;
+
+  function processBiDi(node) {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) return;
+    
+    // Skip code blocks and math formulas
+    if (node.tagName === 'PRE' || node.tagName === 'CODE' || node.closest('pre, code, .katex, math')) {
+      return;
+    }
+
+    const s = loadSettings();
+    if (!s.rtlAuto) return;
+
+    const targets = node.querySelectorAll ? node.querySelectorAll('p, li, [data-message-author-role], .sidebar-navigation span') : [];
+    const elementsToCheck = [node, ...targets];
+
+    elementsToCheck.forEach(el => {
+      if (el.tagName === 'PRE' || el.tagName === 'CODE' || el.closest('pre, code, .katex, math')) return;
+      const text = el.textContent || '';
+      if (PERSIAN_REGEX.test(text.substring(0, 80))) {
+        if (!el.classList.contains('cpe-rtl-text')) {
+          el.classList.add('cpe-rtl-text');
+          el.classList.remove('cpe-ltr-text');
+        }
+      }
+    });
+  }
+
+  const observer = new MutationObserver(mutations => {
+    for (const m of mutations) {
+      for (const node of m.addedNodes) {
+        processBiDi(node);
+      }
+    }
+  });
+
+  if (document.body) {
+    observer.observe(document.body, { childList: true, subtree: true });
+  } else {
+    document.addEventListener('DOMContentLoaded', () => {
+      if (document.body) observer.observe(document.body, { childList: true, subtree: true });
+    });
+  }
+
+  // 6. Draggable Floating Action HUD UI
+  function renderHUD() {
+    let hud = document.getElementById('cpe-hud-pill');
+    if (hud) hud.remove();
+
+    hud = document.createElement('div');
+    hud.id = 'cpe-hud-pill';
+
+    hud.innerHTML = `
+      <span id="cpe-hud-drag-handle" style="cursor: grab; display: flex; align-items: center; gap: 4px; padding: 2px 4px; border-radius: 6px; user-select: none;" title="برای جابه‌جایی نوار، اینجا را بگیرید و بکشید">
+        <span style="font-size: 13px; color: rgba(255,255,255,0.45); font-family: monospace;">⠿</span>
+        <span style="width: 7px; height: 7px; border-radius: 50%; background: #00f0ff; box-shadow: 0 0 8px #00f0ff;"></span>
+        <span style="font-size: 11px; font-weight: 700; color: #00f0ff; letter-spacing: 0.5px;">Codex Pro</span>
+      </span>
+      <button class="cpe-hud-btn" id="cpe-btn-new-chat" title="باز کردن چت جدید (Ctrl+Shift+O)">
+        ➕ <span>صفحه جدید</span>
+      </button>
+      <button class="cpe-hud-btn" id="cpe-btn-switch-account" title="مدیریت و سوئیچ بین اکانت‌ها">
+        🔄 <span>اکانت‌ها</span>
+      </button>
+      <button class="cpe-hud-btn" id="cpe-btn-login" title="ورود و احراز هویت (OAuth، API Key یا پنجره مستقل)">
+        🔐 <span>لاگین</span>
+      </button>
+      <button class="cpe-hud-btn" id="cpe-btn-theme" title="تنظیمات فونت، تم و استروک">
+        🎨 <span>تم و فونت</span>
+      </button>
+    `;
+
+    const parentEl = document.body || document.documentElement;
+    if (parentEl) {
+      parentEl.appendChild(hud);
+    }
+
+    // Restore saved position
+    try {
+      const savedPos = JSON.parse(localStorage.getItem('cpe_hud_pill_pos') || 'null');
+      if (savedPos && typeof savedPos.x === 'number') {
+        const maxX = Math.max(10, window.innerWidth - 380);
+        const maxY = Math.max(10, window.innerHeight - 60);
+        const clampedX = Math.min(Math.max(10, savedPos.x), maxX);
+        const clampedY = Math.min(Math.max(10, savedPos.y), maxY);
+        hud.style.left = `${clampedX}px`;
+        hud.style.top = `${clampedY}px`;
+        hud.style.right = 'auto';
+      }
+    } catch(e) {}
+
+    // Make HUD Draggable
+    let isDragging = false;
+    let startX = 0, startY = 0;
+    let initialLeft = 0, initialTop = 0;
+
+    hud.addEventListener('mousedown', (e) => {
+      if (e.target.closest('button') || e.target.closest('.cpe-hud-btn')) return;
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = hud.getBoundingClientRect();
+      initialLeft = rect.left;
+      initialTop = rect.top;
+
+      hud.style.transition = 'none';
+      hud.style.cursor = 'grabbing';
+      document.body.style.userSelect = 'none';
+
+      const onMouseMove = (ev) => {
+        if (!isDragging) return;
+        const dx = ev.clientX - startX;
+        const dy = ev.clientY - startY;
+
+        let newX = initialLeft + dx;
+        let newY = initialTop + dy;
+
+        const maxX = window.innerWidth - hud.offsetWidth - 10;
+        const maxY = window.innerHeight - hud.offsetHeight - 10;
+        newX = Math.max(10, Math.min(newX, maxX));
+        newY = Math.max(10, Math.min(newY, maxY));
+
+        hud.style.left = `${newX}px`;
+        hud.style.top = `${newY}px`;
+        hud.style.right = 'auto';
+      };
+
+      const onMouseUp = () => {
+        if (!isDragging) return;
+        isDragging = false;
+        hud.style.transition = 'transform 0.15s ease, box-shadow 0.2s ease';
+        hud.style.cursor = 'grab';
+        document.body.style.userSelect = '';
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+
+        const finalRect = hud.getBoundingClientRect();
+        try {
+          localStorage.setItem('cpe_hud_pill_pos', JSON.stringify({ x: finalRect.left, y: finalRect.top }));
+        } catch(e) {}
+      };
+
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
+
+    // Button Events
+    document.getElementById('cpe-btn-new-chat').onclick = () => {
+      const selectors = [
+        'a[href="/"]',
+        'button[aria-label*="New chat"]',
+        'button[aria-label*="چت جدید"]',
+        '[data-testid="new-chat-button"]',
+        'a[data-testid="create-new-chat-button"]',
+        'button[data-testid="create-new-chat-button"]'
+      ];
+      for (const sel of selectors) {
+        try {
+          const el = document.querySelector(sel);
+          if (el) {
+            el.click();
+            showToast('➕ گفتگوی جدید باز شد');
+            return;
+          }
+        } catch (e) {}
+      }
+      window.location.href = 'https://chatgpt.com/';
+    };
+
+    document.getElementById('cpe-btn-switch-account').onclick = () => {
+      openAccountModal('switch');
+    };
+
+    document.getElementById('cpe-btn-login').onclick = () => {
+      openAccountModal('login');
+    };
+
+    document.getElementById('cpe-btn-theme').onclick = () => {
+      openThemeModal();
+    };
+  }
+
+  // Toast Notification
+  function showToast(msg, isErr = false) {
+    let t = document.getElementById('cpe-toast');
+    if (t) t.remove();
+    t = document.createElement('div');
+    t.id = 'cpe-toast';
+    t.style.cssText = `
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: ${isErr ? 'rgba(239, 68, 68, 0.95)' : 'rgba(15, 23, 42, 0.95)'};
+      color: #fff;
+      padding: 10px 22px;
+      border-radius: 9999px;
+      border: 1px solid ${isErr ? '#ef4444' : 'rgba(0, 240, 255, 0.4)'};
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      z-index: 2147483647;
+      font-size: 13px;
+      font-family: var(--cpe-font);
+      direction: rtl;
+      transition: all 0.3s ease;
+      pointer-events: none;
+    `;
+    t.textContent = msg;
+    (document.body || document.documentElement).appendChild(t);
+    setTimeout(() => {
+      if (t) {
+        t.style.opacity = '0';
+        setTimeout(() => t.remove(), 300);
+      }
+    }, 3500);
+  }
+
+  // 7. Modals
+  function createModal(id, title, contentHtml) {
+    let overlay = document.getElementById(id);
+    if (overlay) overlay.remove();
+
+    overlay = document.createElement('div');
+    overlay.id = id;
+    overlay.className = 'cpe-modal-overlay';
+
+    overlay.innerHTML = `
+      <div class="cpe-modal-sheet">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 12px;">
+          <h3 style="margin: 0; font-size: 16px; font-weight: 700; color: #00f0ff;">${title}</h3>
+          <button style="background: none; border: none; color: #94a3b8; font-size: 20px; cursor: pointer;" onclick="this.closest('.cpe-modal-overlay').classList.remove('cpe-open')">✕</button>
+        </div>
+        <div>${contentHtml}</div>
+      </div>
+    `;
+
+    (document.body || document.documentElement).appendChild(overlay);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.classList.remove('cpe-open');
+    });
+    return overlay;
+  }
+
+  function openThemeModal() {
+    const s = loadSettings();
+    const fontsFa = [
+      { id: 'Vazirmatn', label: 'وزیرمتن (Vazirmatn - پیش‌فرض وب فارسی / آفلاین)' },
+      { id: 'Estedad', label: 'استعداد (Estedad - مدرن، خوانا و هندسی / آفلاین)' },
+      { id: 'system', label: 'فونت استاندارد سیستم' }
+    ];
+
+    const fontsEn = [
+      { id: 'Outfit', label: '✨ Outfit (مدرن، ژئومتریک و اپل‌استایل - پیشنهادی)' },
+      { id: 'Inter', label: '▫️ Inter (مینیمال و تکنولوژی)' },
+      { id: 'JetBrains Mono', label: '💻 JetBrains Mono (مونو اسپیس برنامه‌نویسی)' },
+      { id: 'system', label: 'فونت پیش‌فرض سیستم' }
+    ];
+
+    const themes = [
+      { id: 'cyber', label: '⚡️ سایبرپانک نئون (Cyan Neon - تم اختصاصی کدکس)' },
+      { id: 'amoled', label: '🖤 آمولد بلک و کریستال خالص (Pure AMOLED)' },
+      { id: 'midnight', label: '🌌 میدنایت ایندیگو (Midnight Indigo)' },
+      { id: 'emerald', label: '🟢 ماتریکس زمردی (Emerald Matrix)' },
+      { id: 'clean_dark', label: '⚪️ دارک اسلیت مدرن (Modern Dark Slate)' }
+    ];
+
+    const strokeModes = [
+      { id: 'refined', label: '💎 کادربندی شیک، مدرن و هماهنگ (Refined Single-Card - توصیه شده)' },
+      { id: 'glow', label: '💫 استروک درخشان نئونی در فوکوس (Glow Accent)' },
+      { id: 'subtle', label: '▫️ کادربندی بسیار ملایم و محو (Subtle 1px)' }
+    ];
+
+    const html = `
+      <div style="margin-bottom: 14px;">
+        <label style="display: block; font-size: 12px; color: #94a3b8; margin-bottom: 5px;">✍️ انتخاب فونت فارسی (آفلاین WOFF2):</label>
+        <select id="cpe-sel-font-fa" style="width: 100%; padding: 10px; border-radius: 10px; background: #1e293b; color: #fff; border: 1px solid rgba(255,255,255,0.15); font-family: inherit;">
+          ${fontsFa.map(f => `<option value="${f.id}" ${s.fontFa === f.id ? 'selected' : ''}>${f.label}</option>`).join('')}
+        </select>
+      </div>
+
+      <div style="margin-bottom: 14px;">
+        <label style="display: block; font-size: 12px; color: #94a3b8; margin-bottom: 5px;">🔤 انتخاب فونت انگلیسی و لاتین (آفلاین WOFF2):</label>
+        <select id="cpe-sel-font-en" style="width: 100%; padding: 10px; border-radius: 10px; background: #1e293b; color: #fff; border: 1px solid rgba(255,255,255,0.15); font-family: inherit;">
+          ${fontsEn.map(f => `<option value="${f.id}" ${s.fontEn === f.id ? 'selected' : ''}>${f.label}</option>`).join('')}
+        </select>
+      </div>
+
+      <div style="margin-bottom: 14px;">
+        <label style="display: block; font-size: 12px; color: #94a3b8; margin-bottom: 5px;">🎨 پالت و تم رنگی فضای کدکس:</label>
+        <select id="cpe-sel-theme" style="width: 100%; padding: 10px; border-radius: 10px; background: #1e293b; color: #fff; border: 1px solid rgba(255,255,255,0.15); font-family: inherit;">
+          ${themes.map(t => `<option value="${t.id}" ${s.theme === t.id ? 'selected' : ''}>${t.label}</option>`).join('')}
+        </select>
+      </div>
+
+      <div style="margin-bottom: 14px;">
+        <label style="display: block; font-size: 12px; color: #94a3b8; margin-bottom: 5px;">🔲 تنظیم کادر و استروک باکس چت (Stroke Style):</label>
+        <select id="cpe-sel-stroke-mode" style="width: 100%; padding: 10px; border-radius: 10px; background: #1e293b; color: #fff; border: 1px solid rgba(255,255,255,0.15); font-family: inherit;">
+          ${strokeModes.map(sm => `<option value="${sm.id}" ${s.strokeMode === sm.id ? 'selected' : ''}>${sm.label}</option>`).join('')}
+        </select>
+      </div>
+
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px; background: rgba(255,255,255,0.04); border-radius: 12px; margin-bottom: 18px;">
+        <span style="font-size: 13px;">↔️ راست‌چین‌سازی خودکار متن فارسی (RTL):</span>
+        <input type="checkbox" id="cpe-chk-rtl" ${s.rtlAuto ? 'checked' : ''} style="width: 18px; height: 18px; cursor: pointer; accent-color: #00f0ff;">
+      </div>
+
+      <button id="cpe-save-theme-btn" style="width: 100%; padding: 12px; background: #00f0ff; color: #000; font-weight: 700; border: none; border-radius: 12px; cursor: pointer; font-size: 14px; font-family: inherit;">
+        ذخیره و اعمال فوری
+      </button>
+    `;
+
+    const modal = createModal('cpe-modal-theme', '🎨 تنظیمات استایل، کادر، فونت‌ها و تم کدکس', html);
+    modal.classList.add('cpe-open');
+
+    document.getElementById('cpe-save-theme-btn').onclick = () => {
+      const fontFa = document.getElementById('cpe-sel-font-fa').value;
+      const fontEn = document.getElementById('cpe-sel-font-en').value;
+      const theme = document.getElementById('cpe-sel-theme').value;
+      const strokeMode = document.getElementById('cpe-sel-stroke-mode').value;
+      const rtl = document.getElementById('cpe-chk-rtl').checked;
+      saveSettings({ fontFa: fontFa, fontEn: fontEn, theme: theme, strokeMode: strokeMode, rtlAuto: rtl });
+      modal.classList.remove('cpe-open');
+      showToast('🎨 تنظیمات تم، فونت‌ها و استروک با موفقیت اعمال شد');
+    };
+  }
+
+  async function openAccountModal(initialTab = 'switch') {
+    let currentTab = initialTab;
+    const modal = createModal('cpe-modal-account', '🔐 مرکز مدیریت حساب‌ها و ورود (Auth & Accounts)', `
+      <div style="display: flex; gap: 8px; margin-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px;">
+        <button id="cpe-tab-btn-switch" style="flex: 1; padding: 9px 12px; border-radius: 10px; border: none; font-weight: 700; font-size: 12.5px; cursor: pointer; font-family: inherit; transition: all 0.2s ease;">
+          🔄 مدیریت و سوئیچ اکانت‌ها
+        </button>
+        <button id="cpe-tab-btn-login" style="flex: 1; padding: 9px 12px; border-radius: 10px; border: none; font-weight: 700; font-size: 12.5px; cursor: pointer; font-family: inherit; transition: all 0.2s ease;">
+          🔐 ورود به حساب جدید (Login)
+        </button>
+      </div>
+      <div id="cpe-acc-body" style="min-height: 180px;">
+        <div style="text-align: center; padding: 30px; color: #94a3b8; font-size: 13px;">
+          ⏳ در حال بارگذاری اطلاعات حساب‌ها...
+        </div>
+      </div>
+    `);
+    modal.classList.add('cpe-open');
+
+    // Fetch live status from local daemons
+    let data = window.__cpe_initial_data || null;
+    for (const port of [39281, 39285]) {
+      try {
+        const resp = await fetch(`http://127.0.0.1:${port}/api/chatgpt/status`);
+        if (resp.ok) {
+          data = await resp.json();
+          window.__cpe_initial_data = data;
+          break;
+        }
+      } catch (e) {}
+    }
+
+    function renderTabs() {
+      const btnSwitch = document.getElementById('cpe-tab-btn-switch');
+      const btnLogin = document.getElementById('cpe-tab-btn-login');
+      const body = document.getElementById('cpe-acc-body');
+      if (!btnSwitch || !btnLogin || !body) return;
+
+      if (currentTab === 'switch') {
+        btnSwitch.style.background = '#00f0ff';
+        btnSwitch.style.color = '#000';
+        btnSwitch.style.boxShadow = '0 0 12px rgba(0, 240, 255, 0.4)';
+        btnLogin.style.background = 'rgba(255, 255, 255, 0.06)';
+        btnLogin.style.color = '#94a3b8';
+        btnLogin.style.boxShadow = 'none';
+        renderSwitchTab(body, data);
+      } else {
+        btnLogin.style.background = '#00f0ff';
+        btnLogin.style.color = '#000';
+        btnLogin.style.boxShadow = '0 0 12px rgba(0, 240, 255, 0.4)';
+        btnSwitch.style.background = 'rgba(255, 255, 255, 0.06)';
+        btnSwitch.style.color = '#94a3b8';
+        btnSwitch.style.boxShadow = 'none';
+        renderLoginTab(body, data);
+      }
+    }
+
+    function renderSwitchTab(container, d) {
+      const profiles = (d && d.profiles && d.profiles.profiles) ? d.profiles.profiles : [];
+      const activeProfId = (d && d.profiles && d.profiles.active_profile) ? d.profiles.active_profile : 'default';
+      const activeMeta = (d && d.profiles && d.profiles.active_meta) ? d.profiles.active_meta : {};
+
+      let listHtml = '';
+      if (profiles.length > 0) {
+        listHtml = profiles.map(p => {
+          const isActive = p.id === activeProfId || p.is_active;
+          return `
+            <div style="padding: 10px 14px; background: ${isActive ? 'rgba(0, 240, 255, 0.08)' : 'rgba(255, 255, 255, 0.04)'}; border: 1px solid ${isActive ? 'rgba(0, 240, 255, 0.4)' : 'rgba(255, 255, 255, 0.1)'}; border-radius: 12px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+              <div>
+                <div style="font-weight: 700; font-size: 13px; color: ${isActive ? '#00f0ff' : '#f1f5f9'};">
+                  ${p.display_name || p.id}
+                </div>
+                <div style="font-size: 11px; color: #94a3b8; direction: ltr; text-align: right;">
+                  ${p.email || 'پروفایل Codex'}
+                </div>
+              </div>
+              <div>
+                ${isActive 
+                  ? '<span style="font-size: 11px; background: #00f0ff; color: #000; font-weight: 700; padding: 3px 10px; border-radius: 9999px;">فعال</span>'
+                  : `<button class="cpe-btn-switch-target" data-id="${p.id}" style="padding: 5px 12px; background: rgba(0, 240, 255, 0.18); border: 1px solid rgba(0, 240, 255, 0.4); color: #00f0ff; border-radius: 8px; font-size: 12px; cursor: pointer; font-weight: 600; font-family: inherit;">🔄 سوئیچ</button>`
+                }
+              </div>
+            </div>
+          `;
+        }).join('');
+      } else {
+        listHtml = `
+          <div style="padding: 14px; text-align: center; background: rgba(255,255,255,0.03); border-radius: 10px; color: #94a3b8; font-size: 12px; margin-bottom: 8px;">
+            حساب فعال: <strong style="color: #00f0ff;">${activeMeta.email || 'Active User'}</strong>
+          </div>
+        `;
+      }
+
+      container.innerHTML = `
+        <div style="width: 100%;">
+          <div style="margin-bottom: 10px; font-size: 12px; color: #94a3b8; display: flex; justify-content: space-between; align-items: center;">
+            <span>پروفایل‌های ذخیره‌شده سشن‌های Codex / ChatGPT:</span>
+            ${activeMeta.auth_mode ? `<span style="font-size: 10.5px; background: rgba(255,255,255,0.08); padding: 2px 7px; border-radius: 6px; color: #cbd5e1;">حالت: ${activeMeta.auth_mode}</span>` : ''}
+          </div>
+          <div style="max-height: 180px; overflow-y: auto; margin-bottom: 14px;">
+            ${listHtml}
+          </div>
+
+          <div style="background: rgba(255,255,255,0.03); border: 1px dashed rgba(255,255,255,0.15); border-radius: 12px; padding: 12px; margin-bottom: 14px;">
+            <div style="font-size: 12px; color: #cbd5e1; margin-bottom: 8px;">💾 ذخیره سشن لاگین‌شده فعلی به عنوان پروفایل:</div>
+            <div style="display: flex; gap: 8px;">
+              <input type="text" id="cpe-new-prof-name" placeholder="نام نمایشی (مثلاً اکانت کاری یا VIP 2)" style="flex: 1; padding: 8px 12px; border-radius: 8px; background: #1e293b; border: 1px solid rgba(255,255,255,0.15); color: #fff; font-size: 12px; font-family: inherit;">
+              <button id="cpe-btn-save-prof" style="padding: 8px 14px; background: #00f0ff; color: #000; border: none; border-radius: 8px; font-weight: 700; font-size: 12px; cursor: pointer; font-family: inherit;">ذخیره</button>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <button id="cpe-btn-launch-inst2" style="padding: 10px; background: rgba(168, 85, 247, 0.2); border: 1px solid rgba(168, 85, 247, 0.4); color: #c084fc; border-radius: 12px; font-weight: 600; cursor: pointer; font-size: 12px; font-family: inherit;">
+              🚀 پنجره دوم همزمان (اکانت ۲)
+            </button>
+            <button id="cpe-btn-open-hub" style="padding: 10px; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.15); color: #fff; border-radius: 12px; font-weight: 600; cursor: pointer; font-size: 12px; font-family: inherit;">
+              🎛 پنل کامل Antigravity
+            </button>
+          </div>
+        </div>
+      `;
+
+      // Switch profile listeners
+      container.querySelectorAll('.cpe-btn-switch-target').forEach(btn => {
+        btn.onclick = async () => {
+          const profId = btn.getAttribute('data-id');
+          btn.disabled = true;
+          btn.textContent = '⏳ در حال تغییر...';
+          try {
+            let ok = false;
+            for (const port of [39281, 39285]) {
+              try {
+                const res = await fetch(`http://127.0.0.1:${port}/api/chatgpt/switch`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ profile: profId })
+                });
+                if (res.ok) { ok = true; break; }
+              } catch(e) {}
+            }
+            if (ok) {
+              showToast(`✅ اکانت به '${profId}' سوئیچ شد. در حال بازنشانی...`);
+              setTimeout(() => {
+                modal.classList.remove('cpe-open');
+                window.location.reload();
+              }, 1200);
+            } else {
+              showToast(`❌ خطا در تغییر اکانت`, true);
+              btn.disabled = false;
+              btn.textContent = '🔄 سوئیچ';
+            }
+          } catch (e) {
+            showToast(`❌ خطا: ${e.message}`, true);
+            btn.disabled = false;
+            btn.textContent = '🔄 سوئیچ';
+          }
+        };
+      });
+
+      // Save profile listener
+      const saveBtn = document.getElementById('cpe-btn-save-prof');
+      if (saveBtn) {
+        saveBtn.onclick = async () => {
+          const inp = document.getElementById('cpe-new-prof-name');
+          const val = (inp.value || '').trim();
+          if (!val) {
+            showToast('لطفاً یک نام وارد کنید', true);
+            return;
+          }
+          saveBtn.disabled = true;
+          saveBtn.textContent = '⏳ ...';
+          const cleanId = val.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+          try {
+            for (const port of [39281, 39285]) {
+              try {
+                await fetch(`http://127.0.0.1:${port}/api/chatgpt/save_profile`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ id: cleanId, name: val })
+                });
+                break;
+              } catch(e) {}
+            }
+            showToast(`✅ اکانت '${val}' ذخیره شد`);
+            openAccountModal('switch');
+          } catch(e) {
+            showToast(`خطا در ذخیره اکانت`, true);
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'ذخیره';
+          }
+        };
+      }
+
+      // Instance 2 button
+      const inst2Btn = document.getElementById('cpe-btn-launch-inst2');
+      if (inst2Btn) {
+        inst2Btn.onclick = () => {
+          for (const port of [39281, 39285]) {
+            fetch(`http://127.0.0.1:${port}/api/chatgpt/launch?instance=2`).catch(() => {});
+          }
+          showToast('🚀 پنجره اکانت ۲ اجرا شد.');
+          modal.classList.remove('cpe-open');
+        };
+      }
+
+      // Hub button
+      const hubBtn = document.getElementById('cpe-btn-open-hub');
+      if (hubBtn) {
+        hubBtn.onclick = () => {
+          window.open('http://127.0.0.1:39285', '_blank');
+          modal.classList.remove('cpe-open');
+        };
+      }
+    }
+
+    function renderLoginTab(container, d) {
+      const activeMeta = (d && d.profiles && d.profiles.active_meta) ? d.profiles.active_meta : {};
+      const hasActive = activeMeta && activeMeta.exists;
+      const currentEmail = activeMeta.email || 'ناشناس';
+
+      container.innerHTML = `
+        <div style="width: 100%;">
+          <!-- Active Status Notice -->
+          <div style="padding: 10px 14px; background: rgba(0, 240, 255, 0.06); border: 1px solid rgba(0, 240, 255, 0.2); border-radius: 12px; margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ${hasActive ? '#10b981' : '#f59e0b'}; box-shadow: 0 0 8px ${hasActive ? '#10b981' : '#f59e0b'};"></span>
+              <span style="font-size: 12px; color: #cbd5e1;">وضعیت نشست جاری:</span>
+            </div>
+            <span style="font-size: 12px; font-weight: 700; color: #00f0ff;">${hasActive ? currentEmail : 'وارد نشده'}</span>
+          </div>
+
+          <!-- Option 1: Browser OAuth Login -->
+          <div style="padding: 14px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; margin-bottom: 12px;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+              <span style="font-size: 16px;">🌐</span>
+              <strong style="font-size: 13px; color: #f1f5f9;">ورود رسمی با مرورگر (OpenAI OAuth)</strong>
+            </div>
+            <div style="font-size: 11.5px; color: #94a3b8; line-height: 1.5; margin-bottom: 10px;">
+              صفحه استاندارد ورود OpenAI در مرورگر پیش‌فرض سیستم باز می‌شود. پس از ورود با اکانت مورد نظر، اعتبار کاربری به طور خودکار به کدکس منتقل می‌شود.
+            </div>
+            <button id="cpe-btn-oauth-login" style="width: 100%; padding: 10px; background: #00f0ff; color: #000; font-weight: 700; border: none; border-radius: 10px; cursor: pointer; font-size: 12.5px; font-family: inherit; transition: all 0.2s ease;">
+              🔑 شروع ورود از طریق مرورگر (codex login)
+            </button>
+          </div>
+
+          <!-- Option 2: Isolated Instance 2 -->
+          <div style="padding: 14px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; margin-bottom: 12px;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+              <span style="font-size: 16px;">🚀</span>
+              <strong style="font-size: 13px; color: #f1f5f9;">اجرای پنجره دوم برای ورود همزمان (اکانت ۲)</strong>
+            </div>
+            <div style="font-size: 11.5px; color: #94a3b8; line-height: 1.5; margin-bottom: 10px;">
+              بدون خروج از این اکانت، یک پنجره کاملاً مستقل با حافظه و کش مجزا اجرا کنید و در آن به اکانت دوم خود وارد شوید.
+            </div>
+            <button id="cpe-btn-login-inst2" style="width: 100%; padding: 10px; background: rgba(168, 85, 247, 0.2); border: 1px solid rgba(168, 85, 247, 0.4); color: #c084fc; font-weight: 600; border-radius: 10px; cursor: pointer; font-size: 12.5px; font-family: inherit; transition: all 0.2s ease;">
+              ⚡️ باز کردن محیط ایزوله (ChatGPT Instance 2)
+            </button>
+          </div>
+
+          <!-- Option 3: API Key Direct Auth -->
+          <div style="padding: 14px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; margin-bottom: 12px;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+              <span style="font-size: 16px;">🔑</span>
+              <strong style="font-size: 13px; color: #f1f5f9;">ورود مستقیم با OpenAI API Key</strong>
+            </div>
+            <div style="font-size: 11.5px; color: #94a3b8; margin-bottom: 8px;">
+              در صورتی که کلید API اختصاصی دارید، آن را در کادر زیر وارد کنید:
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <input type="password" id="cpe-inp-apikey" placeholder="sk-..." style="flex: 1; padding: 8px 12px; border-radius: 8px; background: #1e293b; border: 1px solid rgba(255,255,255,0.15); color: #fff; font-size: 12px; font-family: monospace; direction: ltr;">
+              <button id="cpe-btn-apikey-login" style="padding: 8px 14px; background: rgba(0, 240, 255, 0.18); border: 1px solid rgba(0, 240, 255, 0.4); color: #00f0ff; border-radius: 8px; font-weight: 700; font-size: 12px; cursor: pointer; font-family: inherit;">ثبت</button>
+            </div>
+          </div>
+
+          <!-- Option 4: Sign Out / Logout -->
+          <div style="padding: 12px 14px; background: rgba(239, 68, 68, 0.06); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 14px; display: flex; align-items: center; justify-content: space-between;">
+            <div>
+              <div style="font-weight: 700; font-size: 12.5px; color: #ef4444;">خروج امن از حساب جاری</div>
+              <div style="font-size: 11px; color: #94a3b8;">پاکسازی نشست فعلی برای لاگین با اکانت جدید</div>
+            </div>
+            <button id="cpe-btn-logout" style="padding: 7px 14px; background: rgba(239, 68, 68, 0.18); border: 1px solid rgba(239, 68, 68, 0.4); color: #ef4444; border-radius: 8px; font-weight: 700; font-size: 12px; cursor: pointer; font-family: inherit;">
+              🚪 خروج (Sign Out)
+            </button>
+          </div>
+        </div>
+      `;
+
+      // Option 1 OAuth action
+      const btnOAuth = document.getElementById('cpe-btn-oauth-login');
+      if (btnOAuth) {
+        btnOAuth.onclick = async () => {
+          btnOAuth.disabled = true;
+          btnOAuth.textContent = '⏳ در حال باز کردن مرورگر...';
+          try {
+            for (const port of [39281, 39285]) {
+              try {
+                const res = await fetch(`http://127.0.0.1:${port}/api/chatgpt/login?mode=oauth`);
+                if (res.ok) break;
+              } catch(e) {}
+            }
+            showToast('🌐 مرورگر باز شد. لطفاً ورود به حساب OpenAI را تکمیل نمایید.');
+            btnOAuth.textContent = '✅ در انتظار تکمیل لاگین در مرورگر...';
+          } catch(e) {
+            showToast('خطا در اجرای فرآیند ورود', true);
+            btnOAuth.disabled = false;
+            btnOAuth.textContent = '🔑 شروع ورود از طریق مرورگر (codex login)';
+          }
+        };
+      }
+
+      // Option 2 Instance 2 action
+      const btnInst2 = document.getElementById('cpe-btn-login-inst2');
+      if (btnInst2) {
+        btnInst2.onclick = () => {
+          for (const port of [39281, 39285]) {
+            fetch(`http://127.0.0.1:${port}/api/chatgpt/launch?instance=2`).catch(() => {});
+          }
+          showToast('🚀 پنجره مستقل اکانت ۲ اجرا شد');
+          modal.classList.remove('cpe-open');
+        };
+      }
+
+      // Option 3 API Key action
+      const btnApiKey = document.getElementById('cpe-btn-apikey-login');
+      if (btnApiKey) {
+        btnApiKey.onclick = async () => {
+          const inp = document.getElementById('cpe-inp-apikey');
+          const keyVal = (inp.value || '').trim();
+          if (!keyVal) {
+            showToast('لطفاً کلید API را وارد کنید', true);
+            return;
+          }
+          btnApiKey.disabled = true;
+          btnApiKey.textContent = '⏳ ...';
+          try {
+            let ok = false;
+            let msg = '';
+            for (const port of [39281, 39285]) {
+              try {
+                const resp = await fetch(`http://127.0.0.1:${port}/api/chatgpt/login`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ mode: 'api_key', api_key: keyVal })
+                });
+                const json = await resp.json();
+                if (json.success) { ok = true; msg = json.message; break; }
+              } catch(e) {}
+            }
+            if (ok) {
+              showToast('✅ کلید API با موفقیت ثبت و تایید شد');
+              setTimeout(() => window.location.reload(), 1500);
+            } else {
+              showToast(`❌ خطا در تایید کلید: ${msg || 'نامعتبر'}`, true);
+              btnApiKey.disabled = false;
+              btnApiKey.textContent = 'ثبت';
+            }
+          } catch(e) {
+            showToast(`خطا: ${e.message}`, true);
+            btnApiKey.disabled = false;
+            btnApiKey.textContent = 'ثبت';
+          }
+        };
+      }
+
+      // Option 4 Logout action
+      const btnLogout = document.getElementById('cpe-btn-logout');
+      if (btnLogout) {
+        btnLogout.onclick = async () => {
+          if (!confirm('آیا از خروج از نشست فعلی اطمینان دارید؟')) return;
+          btnLogout.disabled = true;
+          btnLogout.textContent = '⏳ در حال خروج...';
+          try {
+            for (const port of [39281, 39285]) {
+              try {
+                await fetch(`http://127.0.0.1:${port}/api/chatgpt/logout`);
+                break;
+              } catch(e) {}
+            }
+            showToast('🚪 خروج انجام شد. اکنون می‌توانید وارد اکانت دیگری شوید.');
+            setTimeout(() => {
+              modal.classList.remove('cpe-open');
+              window.location.reload();
+            }, 1200);
+          } catch(e) {
+            showToast('خطا در خروج از حساب', true);
+            btnLogout.disabled = false;
+            btnLogout.textContent = '🚪 خروج (Sign Out)';
+          }
+        };
+      }
+    }
+
+    // Tab button events
+    const tabSwitchBtn = document.getElementById('cpe-tab-btn-switch');
+    if (tabSwitchBtn) {
+      tabSwitchBtn.onclick = () => {
+        currentTab = 'switch';
+        renderTabs();
+      };
+    }
+    const tabLoginBtn = document.getElementById('cpe-tab-btn-login');
+    if (tabLoginBtn) {
+      tabLoginBtn.onclick = () => {
+        currentTab = 'login';
+        renderTabs();
+      };
+    }
+
+    renderTabs();
+  }
+
+  // 8. Window Exports, Bootstrap & Watchdog
+  window.__cpe_open_account_modal = openAccountModal;
+  window.__cpe_open_theme_modal = openThemeModal;
+  window.__cpe_render_hud = renderHUD;
+  window.__cpe_apply_theme = applyThemeAndFont;
+  window.__cpe_save_settings = saveSettings;
+  window.__cpe_show_toast = showToast;
+
+  function boot() {
+    applyThemeAndFont();
+    renderHUD();
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
+  }
+
+  if (!window.__cpe_watchdog_active) {
+    window.__cpe_watchdog_active = true;
+    setInterval(() => {
+      try {
+        if (!document.getElementById('cpe-hud-pill')) {
+          renderHUD();
+        }
+        if (!document.getElementById('cpe-dynamic-styles')) {
+          applyThemeAndFont();
+        }
+      } catch (e) {}
+    }, 1500);
+  }
+
+  console.log('[ChatGPT Enhanced] UI Enhancement Suite Successfully Mounted!');
+})();
+'''
+
+final_script = template.replace("__VAZIR_B64__", vazir_b64).replace("__ESTEDAD_B64__", estedad_b64).replace("__OUTFIT_B64__", outfit_b64)
+
+target_path = Path("chatgpt_theme_injector.js")
+target_path.write_text(final_script, encoding="utf-8")
+print(f"Written chatgpt_theme_injector.js: {len(final_script)} chars")

@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+ChatGPT Desktop & Codex Chrome DevTools Protocol (CDP) Injector Daemon
+Connects to ChatGPT Desktop instances and injects Persian fonts, themes, and HUD action pill.
+Works for both outer Electron pages and inner chat webviews.
+"""
+
+import os
+import sys
+import json
+import time
+import asyncio
+import logging
+import urllib.request
+from pathlib import Path
+
+try:
+    import websockets
+except ImportError:
+    websockets = None
+
+CURRENT_DIR = Path(__file__).resolve().parent
+INJECTOR_JS_PATH = CURRENT_DIR / "chatgpt_theme_injector.js"
+LOG_FILE = CURRENT_DIR / "chatgpt_cdp_daemon.log"
+handlers = [logging.FileHandler(LOG_FILE, encoding="utf-8")]
+if sys.stdout is not None:
+    handlers.append(logging.StreamHandler(sys.stdout))
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=handlers
+)
+logger = logging.getLogger("chatgpt_cdp")
+
+def load_injector_script():
+    if not INJECTOR_JS_PATH.exists():
+        return ""
+    try:
+        header = ""
+        try:
+            import chatgpt_account_manager as cpm
+            profiles = cpm.list_profiles()
+            settings = cpm.load_settings()
+            init_data = json.dumps({"profiles": profiles, "settings": settings}, ensure_ascii=False)
+            header = f"window.__cpe_initial_data = {init_data};\n"
+        except Exception:
+            pass
+
+        with open(INJECTOR_JS_PATH, "r", encoding="utf-8") as f:
+            return header + f.read()
+    except Exception as e:
+        logger.error(f"Failed to read injector script: {e}")
+        return ""
+
+def get_open_targets(port):
+    """Fetches list of debuggable targets from Chromium DevTools port."""
+    url = f"http://127.0.0.1:{port}/json/list"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "ChatGPT-Enhanced-Daemon"})
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if isinstance(data, list):
+                return data
+    except Exception:
+        pass
+    return []
+
+def is_valid_chatgpt_target(t):
+    """Checks whether a target is a valid ChatGPT surface (page, app, webview, or embedded frame)."""
+    ws_url = t.get("webSocketDebuggerUrl")
+    if not ws_url:
+        return False
+    t_type = t.get("type", "")
+    t_url = (t.get("url") or "").lower()
+    t_title = (t.get("title") or "").lower()
+
+    # Reject internal chrome extensions or devtools panels
+    if any(x in t_url for x in ["devtools://", "chrome-extension://"]):
+        return False
+
+    # Accept any surface hosting chatgpt.com or openai.com
+    if "chatgpt.com" in t_url or "openai.com" in t_url:
+        return True
+
+    # For app/page/webview/other surfaces
+    if t_type in ("page", "app", "webview", "other"):
+        return any(x in (t_url + " " + t_title) for x in ["chatgpt", "codex", "app://"])
+
+    return False
+
+async def send_cdp_cmd(ws, msg_id, method, params, timeout=8.0):
+    await ws.send(json.dumps({"id": msg_id, "method": method, "params": params}))
+    start_t = time.time()
+    while time.time() - start_t < timeout:
+        remaining = timeout - (time.time() - start_t)
+        if remaining <= 0:
+            break
+        try:
+            raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+            data = json.loads(raw)
+            if data.get("id") == msg_id:
+                return data
+        except asyncio.TimeoutError:
+            break
+    return None
+
+async def check_and_inject_target(ws_url, script, force=False):
+    """Connects via WebSocket, checks if HUD exists, and injects if needed."""
+    if not websockets or not ws_url or not script:
+        return False
+    try:
+        async with websockets.connect(ws_url, ping_interval=None, ping_timeout=8, close_timeout=3) as ws:
+            if not force:
+                check_resp = await send_cdp_cmd(ws, 1, "Runtime.evaluate", {
+                    "expression": "Boolean(document.getElementById('cpe-hud-pill'))",
+                    "returnByValue": True
+                }, timeout=3.0)
+                has_pill = check_resp.get("result", {}).get("result", {}).get("value") if check_resp else False
+                if has_pill:
+                    return False
+
+            # Inject the suite
+            eval_resp = await send_cdp_cmd(ws, 2, "Runtime.evaluate", {
+                "expression": script,
+                "returnByValue": True,
+                "userGesture": True
+            }, timeout=8.0)
+            if eval_resp and "exceptionDetails" in eval_resp.get("result", {}):
+                ex = eval_resp["result"]["exceptionDetails"]
+                logger.error(f"Injection failed with exception on {ws_url[:40]}: {ex.get('text', '')} - {ex.get('exception', {}).get('description', '')}")
+                return False
+
+            logger.info(f"Enhanced suite successfully injected into: {ws_url[:50]}...")
+            return True
+    except Exception as e:
+        logger.debug(f"Target WebSocket error for {ws_url}: {e}")
+        return False
+
+async def scan_and_inject_once(ports=[9223, 9224], force=False):
+    script = load_injector_script()
+    if not script:
+        return 0
+
+    success_count = 0
+    for port in ports:
+        targets = get_open_targets(port)
+        for t in targets:
+            if is_valid_chatgpt_target(t):
+                ws_url = t.get("webSocketDebuggerUrl")
+                ok = await check_and_inject_target(ws_url, script, force=force)
+                if ok:
+                    success_count += 1
+    return success_count
+
+async def daemon_loop(ports=[9223, 9224], poll_interval=2.0):
+    logger.info(f"ChatGPT CDP Injector Daemon active on ports {ports}")
+    while True:
+        try:
+            script = load_injector_script()
+            if script:
+                for port in ports:
+                    targets = get_open_targets(port)
+                    for t in targets:
+                        if is_valid_chatgpt_target(t):
+                            ws_url = t.get("webSocketDebuggerUrl")
+                            await check_and_inject_target(ws_url, script, force=False)
+            await asyncio.sleep(poll_interval)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Daemon loop error: {e}")
+            await asyncio.sleep(poll_interval)
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="ChatGPT CDP Injector")
+    parser.add_argument("--once", action="store_true", help="Inject once and exit")
+    parser.add_argument("--force", action="store_true", help="Force inject even if pill exists")
+    parser.add_argument("--ports", nargs="+", type=int, default=[9223, 9224], help="DevTools ports to probe")
+    args = parser.parse_args()
+
+    if args.once:
+        count = asyncio.run(scan_and_inject_once(ports=args.ports, force=args.force))
+        print(f"Injected into {count} targets.")
+    else:
+        try:
+            asyncio.run(daemon_loop(ports=args.ports))
+        except KeyboardInterrupt:
+            print("Stopped.")

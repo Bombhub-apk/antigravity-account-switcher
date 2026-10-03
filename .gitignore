@@ -6,6 +6,19 @@ manifest.json
 accounts/
 oauth_creds.json
 google_accounts.json
+auth.json
+auth.json.bak
+chatgpt_suite_settings.json
+chatgpt_profiles/
+profiles/
+*.session
+*.cookie
+quota_cache*.json
+chatgpt_cdp_daemon.log
+debug_*.py
+inspect_*.py
+check_*.py
+test_*.py
 
 # macOS system files
 .DS_Store
