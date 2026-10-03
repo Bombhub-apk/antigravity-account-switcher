@@ -1738,34 +1738,6 @@ def daemon_loop():
     last_verify_time = 0
     last_chatgpt_relaunch_ts = 0
 
-    def supervise_chatgpt_desktop():
-        nonlocal last_chatgpt_relaunch_ts
-        now_ts = time.time()
-        # Check if ChatGPT process is active
-        is_running = False
-        try:
-            import psutil
-            for p in psutil.process_iter(['name']):
-                if 'chatgpt' in (p.info.get('name') or '').lower():
-                    is_running = True
-                    break
-        except Exception:
-            pass
-
-        if is_running:
-            # Check if DevTools port 9223 is listening
-            port_open = False
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.settimeout(0.3)
-                    port_open = (s.connect_ex(('127.0.0.1', 9223)) == 0)
-            except Exception:
-                port_open = False
-
-            if not port_open:
-                # Do not aggressively kill running ChatGPT instances
-                pass
-
     while True:
         time.sleep(3)
         now = time.time()
@@ -1784,12 +1756,6 @@ def daemon_loop():
                         sync_quota_once(force=True, inject=True)
             else:
                 last_injected_port = None
-        except Exception:
-            pass
-
-        # 2. Supervise ChatGPT desktop instance (auto-restart with DevTools port if opened normally)
-        try:
-            supervise_chatgpt_desktop()
         except Exception:
             pass
 

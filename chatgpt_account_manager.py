@@ -392,14 +392,23 @@ def is_port_open(port):
 
 def launch_chatgpt(instance_num=1, new_window=False, workspace_path=None):
     """
-    Launches ChatGPT Desktop:
-    - instance_num 1: Standard profile, port 9223
-    - instance_num 2: Isolated user-data-dir, port 9224
-    Ensures stale uninstrumented background instances are killed before launch so DevTools port binds.
+    Launches ChatGPT Desktop safely without crashing:
+    - instance_num 1: Standard profile launched via official Store AppContainer or Codex CLI
+    - instance_num 2: Isolated user-data-dir
+    Never kills running ChatGPT processes in background!
     """
+    if sys.platform == "win32" and instance_num == 1 and not new_window:
+        try:
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command", "Start-Process 'shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App'"],
+                timeout=5
+            )
+            return True, "Launched ChatGPT Instance 1 via Windows Application Manager"
+        except Exception:
+            pass
+
     exe = get_chatgpt_exe_path()
     if not exe:
-        # Fallback to codex app
         codex_cli = get_codex_cli_path()
         cmd = [codex_cli, "app"]
         if workspace_path:
@@ -410,26 +419,7 @@ def launch_chatgpt(instance_num=1, new_window=False, workspace_path=None):
     settings = load_settings()
     port = settings.get("devtools_port_1", 9223) if instance_num == 1 else settings.get("devtools_port_2", 9224)
 
-    # If instance 1 and port is not yet open, kill any background/stale ChatGPT processes
-    if instance_num == 1 and not is_port_open(port) and sys.platform == "win32":
-        try:
-            subprocess.run(
-                ["powershell", "-NoProfile", "-Command", "Stop-Process -Name ChatGPT -Force -ErrorAction SilentlyContinue"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=5
-            )
-            time.sleep(0.8)
-        except Exception:
-            pass
-
-    cmd = [
-        exe,
-        f"--remote-debugging-port={port}",
-        "--enable-features=DevToolsWebMCPSupport",
-        "--enable-blink-features=WebMCP"
-    ]
-
+    cmd = [exe]
     if instance_num == 2:
         INSTANCE2_USER_DATA.mkdir(parents=True, exist_ok=True)
         cmd.append(f'--user-data-dir={INSTANCE2_USER_DATA}')
@@ -446,7 +436,7 @@ def launch_chatgpt(instance_num=1, new_window=False, workspace_path=None):
             subprocess.Popen(cmd, cwd=root_dir)
         else:
             subprocess.Popen(cmd, cwd=root_dir, start_new_session=True)
-        return True, f"Launched ChatGPT Instance {instance_num} on port {port}"
+        return True, f"Launched ChatGPT Instance {instance_num}"
     except Exception as e:
         return False, str(e)
 
