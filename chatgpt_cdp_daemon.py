@@ -91,7 +91,7 @@ def get_open_targets(port):
     return []
 
 def is_valid_chatgpt_target(t):
-    """Checks whether a target is a valid ChatGPT surface (page, app, webview, or embedded frame)."""
+    """Checks whether a target is a valid main ChatGPT surface (page or app, rejecting sandboxes/workers)."""
     ws_url = t.get("webSocketDebuggerUrl")
     if not ws_url:
         return False
@@ -99,17 +99,17 @@ def is_valid_chatgpt_target(t):
     t_url = (t.get("url") or "").lower()
     t_title = (t.get("title") or "").lower()
 
-    # Reject internal chrome extensions or devtools panels
-    if any(x in t_url for x in ["devtools://", "chrome-extension://"]):
+    # Reject internal chrome extensions, devtools panels, detached background windows, or sandboxes
+    if any(x in t_url for x in [
+        "devtools://", "chrome-extension://", "web-sandbox", "codex-sandbox", "detached-window"
+    ]):
         return False
 
-    # Accept any surface hosting chatgpt.com or openai.com
-    if "chatgpt.com" in t_url or "openai.com" in t_url:
-        return True
-
-    # For app/page/webview/other surfaces
-    if t_type in ("page", "app", "webview", "other"):
-        return any(x in (t_url + " " + t_title) for x in ["chatgpt", "codex", "app://"])
+    # Accept main page/app surfaces hosting chatgpt or codex app
+    if t_type in ("page", "app"):
+        if "chatgpt.com" in t_url or "app://-/index.html" in t_url:
+            return True
+        return any(x in (t_url + " " + t_title) for x in ["chatgpt", "codex"])
 
     return False
 

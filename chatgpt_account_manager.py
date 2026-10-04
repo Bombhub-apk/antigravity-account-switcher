@@ -550,7 +550,19 @@ def launch_chatgpt(instance_num=1, new_window=False, workspace_path=None):
     port = settings.get("devtools_port_1", 9223) if instance_num == 1 else settings.get("devtools_port_2", 9224)
 
     if sys.platform == "win32" and instance_num == 1 and not new_window:
-        # Launch or bring to front with remote-debugging-port (never force-kill running instance)
+        import psutil
+        is_running = any('chatgpt' in (p.info.get('name') or '').lower() for p in psutil.process_iter(['name']))
+        # If running without debugging port, close the uninstrumented window gracefully so it launches with port
+        if is_running and not is_port_open(port):
+            try:
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-Command", "Get-Process ChatGPT -ErrorAction SilentlyContinue | Stop-Process -ErrorAction SilentlyContinue"],
+                    timeout=5
+                )
+                time.sleep(1.0)
+            except Exception:
+                pass
+
         try:
             subprocess.run(
                 ["powershell", "-NoProfile", "-Command", f"Start-Process -FilePath 'shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App' -ArgumentList '--remote-debugging-port={port}'"],

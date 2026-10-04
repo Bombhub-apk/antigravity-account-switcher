@@ -2,6 +2,11 @@
 // Integrated with Antigravity Account Switcher, Local WOFF2 Fonts (Outfit + Vazirmatn + Estedad), Draggable HUD & KaTeX Math Protection
 
 (() => {
+  // Prevent duplicate execution, background workers, or iframe sandboxes
+  if (window.__cpe_initialized) return;
+  if (window !== window.top) return;
+  const href = window.location.href || '';
+  if (href.includes('web-sandbox') || href.includes('detached-window')) return;
   window.__cpe_initialized = true;
 
   // Cleanup legacy or conflicting style tags if any
@@ -691,10 +696,29 @@
     });
   }
 
+  let bidiTimer = null;
+  const pendingBiDiNodes = new Set();
+  function queueBiDi(node) {
+    if (!node || node.nodeType !== 1) return;
+    pendingBiDiNodes.add(node);
+    if (!bidiTimer) {
+      bidiTimer = setTimeout(() => {
+        bidiTimer = null;
+        const batch = Array.from(pendingBiDiNodes);
+        pendingBiDiNodes.clear();
+        for (const n of batch) {
+          processBiDi(n);
+        }
+      }, 100);
+    }
+  }
+
   const observer = new MutationObserver(mutations => {
     for (const m of mutations) {
       for (const node of m.addedNodes) {
-        processBiDi(node);
+        if (node.nodeType === 1 && node.tagName !== 'SCRIPT' && node.tagName !== 'STYLE') {
+          queueBiDi(node);
+        }
       }
     }
   });
