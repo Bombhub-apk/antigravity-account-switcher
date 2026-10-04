@@ -19,6 +19,7 @@ debug_*.py
 inspect_*.py
 check_*.py
 test_*.py
+*.png
 
 # macOS system files
 .DS_Store

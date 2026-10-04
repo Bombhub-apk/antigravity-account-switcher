@@ -79,6 +79,66 @@
     }
   }
 
+  window.__cpe_pending_reqs = window.__cpe_pending_reqs || {};
+  window.__cpe_on_ipc_reply = function(reqId, result) {
+    if (window.__cpe_pending_reqs && window.__cpe_pending_reqs[reqId]) {
+      const { resolve } = window.__cpe_pending_reqs[reqId];
+      delete window.__cpe_pending_reqs[reqId];
+      resolve(result);
+    }
+  };
+
+  window.callCpeBackend = function(action, data = {}) {
+    return new Promise(async (resolve, reject) => {
+      // 1. Native CDP IPC binding (completely immune to CSP)
+      if (typeof window.__cpe_daemon_ipc === 'function') {
+        const reqId = 'req_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+        window.__cpe_pending_reqs[reqId] = { resolve, reject };
+        try {
+          window.__cpe_daemon_ipc(JSON.stringify({ id: reqId, action, ...data }));
+        } catch(e) {
+          delete window.__cpe_pending_reqs[reqId];
+          fallbackHttp(resolve, reject);
+        }
+        setTimeout(() => {
+          if (window.__cpe_pending_reqs && window.__cpe_pending_reqs[reqId]) {
+            delete window.__cpe_pending_reqs[reqId];
+            fallbackHttp(resolve, reject);
+          }
+        }, 6000);
+        return;
+      }
+
+      // 2. HTTP Fallback
+      fallbackHttp(resolve, reject);
+
+      async function fallbackHttp(res, rej) {
+        for (const port of [39281, 39285]) {
+          try {
+            let url = `http://127.0.0.1:${port}/api/chatgpt/${action === 'get_status' ? 'status' : action}`;
+            let options = { method: 'GET' };
+            if (action === 'save_settings' || action === 'save_profile' || action === 'switch') {
+              options = {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+              };
+            } else if (Object.keys(data).length > 0) {
+              const params = new URLSearchParams(data);
+              url += '?' + params.toString();
+            }
+            const r = await fetch(url, options);
+            if (r.ok) {
+              const j = await r.json();
+              return res(j);
+            }
+          } catch(e) {}
+        }
+        rej(new Error('No response from backend'));
+      }
+    });
+  };
+
   function saveSettings(patch) {
     const current = loadSettings();
     const updated = { ...current, ...patch };
@@ -86,14 +146,8 @@
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
     } catch (e) {}
 
-    // Sync to Python daemon
-    for (const port of [39281, 39285]) {
-      fetch(`http://127.0.0.1:${port}/api/chatgpt/settings`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch)
-      }).catch(() => {});
-    }
+    // Sync to Python daemon via native IPC or HTTP
+    window.callCpeBackend('save_settings', { settings: patch }).catch(() => {});
 
     applyThemeAndFont();
     return updated;
@@ -953,18 +1007,12 @@
     `);
     modal.classList.add('cpe-open');
 
-    // Fetch live status from local daemons
+    // Fetch live status from backend via native CDP IPC (or fallback)
     let data = window.__cpe_initial_data || null;
-    for (const port of [39281, 39285]) {
-      try {
-        const resp = await fetch(`http://127.0.0.1:${port}/api/chatgpt/status`);
-        if (resp.ok) {
-          data = await resp.json();
-          window.__cpe_initial_data = data;
-          break;
-        }
-      } catch (e) {}
-    }
+    try {
+      data = await window.callCpeBackend('status');
+      window.__cpe_initial_data = data;
+    } catch (e) {}
 
     function renderTabs() {
       const btnSwitch = document.getElementById('cpe-tab-btn-switch');
@@ -1064,16 +1112,10 @@
           btn.textContent = '⏳ در حال تغییر...';
           try {
             let ok = false;
-            for (const port of [39281, 39285]) {
-              try {
-                const res = await fetch(`http://127.0.0.1:${port}/api/chatgpt/switch`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ profile: profId })
-                });
-                if (res.ok) { ok = true; break; }
-              } catch(e) {}
-            }
+            try {
+              const res = await window.callCpeBackend('switch', { profile_id: profId });
+              ok = res && (res.success !== false);
+            } catch(e) {}
             if (ok) {
               showToast(`✅ اکانت به '${profId}' سوئیچ شد. در حال بازنشانی...`);
               setTimeout(() => {
@@ -1107,20 +1149,11 @@
           saveBtn.textContent = '⏳ ...';
           const cleanId = val.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
           try {
-            for (const port of [39281, 39285]) {
-              try {
-                await fetch(`http://127.0.0.1:${port}/api/chatgpt/save_profile`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ id: cleanId, name: val })
-                });
-                break;
-              } catch(e) {}
-            }
+            await window.callCpeBackend('save_profile', { profile_id: cleanId, name: val });
             showToast(`✅ اکانت '${val}' ذخیره شد`);
             openAccountModal('switch');
           } catch(e) {
-            showToast(`خطا در ذخیره اکانت`, true);
+            showToast(`خطا در ذخیره اکانت: ${e.message || e}`, true);
             saveBtn.disabled = false;
             saveBtn.textContent = 'ذخیره';
           }
@@ -1131,9 +1164,7 @@
       const inst2Btn = document.getElementById('cpe-btn-launch-inst2');
       if (inst2Btn) {
         inst2Btn.onclick = () => {
-          for (const port of [39281, 39285]) {
-            fetch(`http://127.0.0.1:${port}/api/chatgpt/launch?instance=2`).catch(() => {});
-          }
+          window.callCpeBackend('launch', { instance: 2 }).catch(() => {});
           showToast('🚀 پنجره اکانت ۲ اجرا شد.');
           modal.classList.remove('cpe-open');
         };
@@ -1167,16 +1198,32 @@
 
           <!-- Option 1: Browser OAuth Login -->
           <div style="padding: 14px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; margin-bottom: 12px;">
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-              <span style="font-size: 16px;">🌐</span>
-              <strong style="font-size: 13px; color: #f1f5f9;">ورود رسمی با مرورگر (OpenAI OAuth)</strong>
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 16px;">🌐</span>
+                <strong style="font-size: 13px; color: #f1f5f9;">ورود رسمی با مرورگر (OpenAI OAuth)</strong>
+              </div>
+              <span style="font-size: 10.5px; padding: 2px 8px; border-radius: 6px; background: rgba(0, 240, 255, 0.12); color: #00f0ff; border: 1px solid rgba(0, 240, 255, 0.3);">پیشنهادی</span>
             </div>
             <div style="font-size: 11.5px; color: #94a3b8; line-height: 1.5; margin-bottom: 10px;">
-              صفحه استاندارد ورود OpenAI در مرورگر پیش‌فرض سیستم باز می‌شود. پس از ورود با اکانت مورد نظر، اعتبار کاربری به طور خودکار به کدکس منتقل می‌شود.
+              صفحه استاندارد ورود OpenAI در مرورگر باز می‌شود. پس از ورود با اکانت مورد نظر، نشست به طور خودکار به برنامه منتقل می‌شود.
             </div>
-            <button id="cpe-btn-oauth-login" style="width: 100%; padding: 10px; background: #00f0ff; color: #000; font-weight: 700; border: none; border-radius: 10px; cursor: pointer; font-size: 12.5px; font-family: inherit; transition: all 0.2s ease;">
-              🔑 شروع ورود از طریق مرورگر (codex login)
-            </button>
+            <div style="display: flex; gap: 8px;">
+              <button id="cpe-btn-oauth-login" style="flex: 1; padding: 10px; background: #00f0ff; color: #000; font-weight: 700; border: none; border-radius: 10px; cursor: pointer; font-size: 12.5px; font-family: inherit; transition: all 0.2s ease;">
+                🔑 شروع ورود از طریق مرورگر (codex login)
+              </button>
+              <button id="cpe-btn-web-login" style="padding: 10px 14px; background: rgba(255,255,255,0.08); color: #cbd5e1; font-weight: 600; border: 1px solid rgba(255,255,255,0.15); border-radius: 10px; cursor: pointer; font-size: 11.5px; font-family: inherit; transition: all 0.2s ease;" title="ورود مستقیم به وبسایت ChatGPT">
+                🌐 وب ChatGPT
+              </button>
+            </div>
+            <div id="cpe-oauth-direct-box" style="display: none; margin-top: 10px; padding: 10px; background: rgba(0, 240, 255, 0.05); border: 1px dashed rgba(0, 240, 255, 0.3); border-radius: 8px;">
+              <div style="font-size: 11px; color: #cbd5e1; margin-bottom: 6px;">لینک احراز هویت اختصاصی:</div>
+              <div style="display: flex; gap: 6px;">
+                <input id="cpe-oauth-url-inp" readonly style="flex: 1; padding: 6px 8px; border-radius: 6px; background: #0f172a; border: 1px solid rgba(255,255,255,0.15); color: #00f0ff; font-size: 10.5px; font-family: monospace; direction: ltr;">
+                <button id="cpe-btn-copy-oauth" style="padding: 6px 10px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: #fff; border-radius: 6px; font-size: 11px; cursor: pointer; font-family: inherit;">کپی</button>
+                <button id="cpe-btn-open-oauth" style="padding: 6px 10px; background: #00f0ff; border: none; color: #000; font-weight: 700; border-radius: 6px; font-size: 11px; cursor: pointer; font-family: inherit;">باز کردن</button>
+              </div>
+            </div>
           </div>
 
           <!-- Option 2: Isolated Instance 2 -->
@@ -1221,23 +1268,101 @@
         </div>
       `;
 
-      // Option 1 OAuth action
+      // Option 1 OAuth actions & polling
       const btnOAuth = document.getElementById('cpe-btn-oauth-login');
+      const btnWebLogin = document.getElementById('cpe-btn-web-login');
+      const directBox = document.getElementById('cpe-oauth-direct-box');
+      const directInp = document.getElementById('cpe-oauth-url-inp');
+      const btnCopyOauth = document.getElementById('cpe-btn-copy-oauth');
+      const btnOpenOauth = document.getElementById('cpe-btn-open-oauth');
+
+      if (btnWebLogin) {
+        btnWebLogin.onclick = () => {
+          window.open('https://chatgpt.com/auth/login', '_blank');
+          showToast('🌐 صفحه رسمی ورود ChatGPT باز شد.');
+        };
+      }
+
+      if (btnCopyOauth && directInp) {
+        btnCopyOauth.onclick = () => {
+          if (directInp.value) {
+            navigator.clipboard.writeText(directInp.value).then(() => {
+              showToast('📋 لینک ورود کپی شد.');
+            }).catch(() => {
+              directInp.select();
+              document.execCommand('copy');
+              showToast('📋 لینک ورود کپی شد.');
+            });
+          }
+        };
+      }
+
+      if (btnOpenOauth && directInp) {
+        btnOpenOauth.onclick = () => {
+          if (directInp.value) {
+            window.open(directInp.value, '_blank');
+          }
+        };
+      }
+
+      let loginPollTimer = null;
+      function startLoginPolling(initialEmail) {
+        if (loginPollTimer) clearInterval(loginPollTimer);
+        let checks = 0;
+        loginPollTimer = setInterval(async () => {
+          checks++;
+          if (checks > 90) { // ~3.5 minutes
+            clearInterval(loginPollTimer);
+            return;
+          }
+          try {
+            const data = await window.callCpeBackend('status');
+            const activeMeta = (data && data.profiles && (data.profiles.active_meta || data.profiles.active)) || {};
+            const nowEmail = activeMeta.email || '';
+            if (activeMeta.exists && nowEmail && nowEmail !== initialEmail && nowEmail !== 'Active User') {
+              clearInterval(loginPollTimer);
+              showToast(`🎉 ورود موفقیت‌آمیز بود! حساب ${nowEmail} متصل گردید.`);
+              setTimeout(() => {
+                openAccountModal('switch');
+              }, 1200);
+              return;
+            }
+          } catch(e) {}
+        }, 2500);
+      }
+
       if (btnOAuth) {
         btnOAuth.onclick = async () => {
           btnOAuth.disabled = true;
-          btnOAuth.textContent = '⏳ در حال باز کردن مرورگر...';
+          btnOAuth.textContent = '⏳ در حال دریافت آدرس ورود و اجرای مرورگر...';
           try {
-            for (const port of [39281, 39285]) {
+            const data = await window.callCpeBackend('login', { mode: 'oauth' });
+            const ok = data && data.success !== false;
+            const authUrl = data && (data.auth_url || (data.message && data.message.auth_url));
+            const msg = data && data.message;
+
+            if (authUrl) {
+              if (directBox && directInp) {
+                directInp.value = authUrl;
+                directBox.style.display = 'block';
+              }
               try {
-                const res = await fetch(`http://127.0.0.1:${port}/api/chatgpt/login?mode=oauth`);
-                if (res.ok) break;
+                window.open(authUrl, '_blank');
               } catch(e) {}
+              showToast('🌐 مرورگر باز شد. لطفاً ورود را در سایت OpenAI تکمیل کنید.');
+              btnOAuth.textContent = '🔄 در انتظار تکمیل ورود در مرورگر...';
+              startLoginPolling(currentEmail);
+            } else if (ok) {
+              showToast('🌐 فرآیند ورود آغاز شد.');
+              btnOAuth.textContent = '🔄 در انتظار تکمیل ورود...';
+              startLoginPolling(currentEmail);
+            } else {
+              showToast('خطا در اجرای فرآیند ورود: ' + (typeof msg === 'string' ? msg : 'خطای ناشناخته'), true);
+              btnOAuth.disabled = false;
+              btnOAuth.textContent = '🔑 شروع ورود از طریق مرورگر (codex login)';
             }
-            showToast('🌐 مرورگر باز شد. لطفاً ورود به حساب OpenAI را تکمیل نمایید.');
-            btnOAuth.textContent = '✅ در انتظار تکمیل لاگین در مرورگر...';
           } catch(e) {
-            showToast('خطا در اجرای فرآیند ورود', true);
+            showToast('خطا در ارتباط با سرور: ' + (e.message || e), true);
             btnOAuth.disabled = false;
             btnOAuth.textContent = '🔑 شروع ورود از طریق مرورگر (codex login)';
           }
@@ -1248,9 +1373,7 @@
       const btnInst2 = document.getElementById('cpe-btn-login-inst2');
       if (btnInst2) {
         btnInst2.onclick = () => {
-          for (const port of [39281, 39285]) {
-            fetch(`http://127.0.0.1:${port}/api/chatgpt/launch?instance=2`).catch(() => {});
-          }
+          window.callCpeBackend('launch', { instance: 2 }).catch(() => {});
           showToast('🚀 پنجره مستقل اکانت ۲ اجرا شد');
           modal.classList.remove('cpe-open');
         };
@@ -1269,24 +1392,12 @@
           btnApiKey.disabled = true;
           btnApiKey.textContent = '⏳ ...';
           try {
-            let ok = false;
-            let msg = '';
-            for (const port of [39281, 39285]) {
-              try {
-                const resp = await fetch(`http://127.0.0.1:${port}/api/chatgpt/login`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ mode: 'api_key', api_key: keyVal })
-                });
-                const json = await resp.json();
-                if (json.success) { ok = true; msg = json.message; break; }
-              } catch(e) {}
-            }
-            if (ok) {
+            const resp = await window.callCpeBackend('login', { mode: 'api_key', api_key: keyVal });
+            if (resp && resp.success) {
               showToast('✅ کلید API با موفقیت ثبت و تایید شد');
               setTimeout(() => window.location.reload(), 1500);
             } else {
-              showToast(`❌ خطا در تایید کلید: ${msg || 'نامعتبر'}`, true);
+              showToast(`❌ خطا در تایید کلید: ${(resp && resp.message) || 'نامعتبر'}`, true);
               btnApiKey.disabled = false;
               btnApiKey.textContent = 'ثبت';
             }
@@ -1306,12 +1417,7 @@
           btnLogout.disabled = true;
           btnLogout.textContent = '⏳ در حال خروج...';
           try {
-            for (const port of [39281, 39285]) {
-              try {
-                await fetch(`http://127.0.0.1:${port}/api/chatgpt/logout`);
-                break;
-              } catch(e) {}
-            }
+            await window.callCpeBackend('logout');
             showToast('🚪 خروج انجام شد. اکنون می‌توانید وارد اکانت دیگری شوید.');
             setTimeout(() => {
               modal.classList.remove('cpe-open');

@@ -129,12 +129,117 @@ async def send_cdp_cmd(ws, msg_id, method, params, timeout=8.0):
             break
     return None
 
+async def handle_target_ipc(ws, raw_msg):
+    """Handles bidirectional native IPC calls from ChatGPT webview, bypassing CSP completely."""
+    try:
+        msg = json.loads(raw_msg)
+        if msg.get("method") == "Runtime.bindingCalled" and msg.get("params", {}).get("name") == "__cpe_daemon_ipc":
+            payload_str = msg["params"].get("payload", "{}")
+            payload = json.loads(payload_str)
+            req_id = payload.get("id")
+            action = payload.get("action")
+            import chatgpt_account_manager as cpm
+            resp = {}
+
+            if action == "login":
+                mode = payload.get("mode", "oauth")
+                api_key = payload.get("api_key")
+                ok, res = cpm.trigger_codex_login(mode=mode, api_key=api_key)
+                if isinstance(res, dict):
+                    resp = {"success": ok, "auth_url": res.get("auth_url"), "message": res.get("message", "")}
+                else:
+                    resp = {"success": ok, "message": str(res)}
+
+            elif action in ("status", "get_status"):
+                profiles = cpm.list_profiles()
+                settings = cpm.load_settings()
+                resp = {"status": "ok", "profiles": profiles, "settings": settings}
+
+            elif action == "switch":
+                prof_id = payload.get("profile_id")
+                ok, res = cpm.switch_profile(prof_id)
+                resp = {"success": ok, "message": res}
+
+            elif action == "save_profile":
+                prof_id = payload.get("profile_id")
+                name = payload.get("name")
+                ok, res = cpm.save_current_profile(prof_id, display_name=name)
+                resp = {"success": ok, "profile": res}
+
+            elif action == "save_settings":
+                ok, res = cpm.save_settings(payload.get("settings", {}))
+                resp = {"success": ok, "settings": res}
+
+            elif action == "logout":
+                ok, res = cpm.trigger_codex_logout()
+                resp = {"success": ok, "message": res}
+
+            elif action == "launch":
+                inst = int(payload.get("instance", 1))
+                new_win = bool(payload.get("new_window", False))
+                ok, res = cpm.launch_chatgpt(instance_num=inst, new_window=new_win)
+                resp = {"success": ok, "message": res}
+
+            # Reply to the webview
+            reply_code = f"window.__cpe_on_ipc_reply && window.__cpe_on_ipc_reply({json.dumps(req_id)}, {json.dumps(resp, ensure_ascii=False)});"
+            await ws.send(json.dumps({
+                "id": int(time.time() * 1000) % 1000000,
+                "method": "Runtime.evaluate",
+                "params": {"expression": reply_code}
+            }))
+    except Exception as e:
+        logger.error(f"Error handling CPE IPC: {e}")
+
+async def target_worker(t_id, ws_url):
+    """Dedicated persistent worker for an active ChatGPT DevTools target."""
+    while True:
+        try:
+            async with websockets.connect(ws_url, ping_interval=15, ping_timeout=10, close_timeout=3) as ws:
+                logger.info(f"[CPE WORKER] Connected to target {t_id}")
+                # Enable Runtime domain so bindingCalled events are delivered
+                await ws.send(json.dumps({"id": 1, "method": "Runtime.enable"}))
+                await ws.send(json.dumps({"id": 2, "method": "Runtime.addBinding", "params": {"name": "__cpe_daemon_ipc"}}))
+                try:
+                    await asyncio.wait_for(ws.recv(), timeout=2.0)
+                except Exception:
+                    pass
+
+                # Inject script
+                script = load_injector_script()
+                if script:
+                    await ws.send(json.dumps({
+                        "id": 3,
+                        "method": "Runtime.evaluate",
+                        "params": {"expression": script, "userGesture": True}
+                    }))
+                    try:
+                        await asyncio.wait_for(ws.recv(), timeout=4.0)
+                    except Exception:
+                        pass
+
+                # Listen for IPC messages
+                async for raw in ws:
+                    await handle_target_ipc(ws, raw)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.debug(f"[CPE WORKER] Worker error for {t_id}: {e}")
+            await asyncio.sleep(2.0)
+
 async def check_and_inject_target(ws_url, script, force=False):
-    """Connects via WebSocket, checks if HUD exists, and injects if needed."""
+    """Connects via WebSocket, binds IPC, and injects if needed."""
     if not websockets or not ws_url or not script:
         return False
     try:
         async with websockets.connect(ws_url, ping_interval=None, ping_timeout=8, close_timeout=3) as ws:
+            # Bind native IPC
+            await ws.send(json.dumps({"id": 9, "method": "Runtime.enable"}))
+            await ws.send(json.dumps({"id": 10, "method": "Runtime.addBinding", "params": {"name": "__cpe_daemon_ipc"}}))
+            try:
+                await asyncio.wait_for(ws.recv(), timeout=2.0)
+            except Exception:
+                pass
+
             if not force:
                 check_resp = await send_cdp_cmd(ws, 1, "Runtime.evaluate", {
                     "expression": "Boolean(document.getElementById('cpe-hud-pill'))",
@@ -179,18 +284,30 @@ async def scan_and_inject_once(ports=[9223, 9224], force=False):
 
 async def daemon_loop(ports=[9223, 9224], poll_interval=2.0):
     logger.info(f"ChatGPT CDP Injector Daemon active on ports {ports}")
+    workers = {}  # t_id -> asyncio.Task
     while True:
         try:
-            script = load_injector_script()
-            if script:
-                for port in ports:
-                    targets = get_open_targets(port)
-                    for t in targets:
-                        if is_valid_chatgpt_target(t):
-                            ws_url = t.get("webSocketDebuggerUrl")
-                            await check_and_inject_target(ws_url, script, force=False)
+            current_target_ids = set()
+            for port in ports:
+                targets = get_open_targets(port)
+                for t in targets:
+                    if is_valid_chatgpt_target(t):
+                        t_id = t.get("id") or t.get("webSocketDebuggerUrl")
+                        ws_url = t.get("webSocketDebuggerUrl")
+                        current_target_ids.add(t_id)
+                        if t_id not in workers or workers[t_id].done():
+                            workers[t_id] = asyncio.create_task(target_worker(t_id, ws_url))
+
+            # Cancel workers for closed targets
+            for t_id in list(workers.keys()):
+                if t_id not in current_target_ids:
+                    workers[t_id].cancel()
+                    del workers[t_id]
+
             await asyncio.sleep(poll_interval)
         except asyncio.CancelledError:
+            for w in workers.values():
+                w.cancel()
             break
         except Exception as e:
             logger.error(f"Daemon loop error: {e}")

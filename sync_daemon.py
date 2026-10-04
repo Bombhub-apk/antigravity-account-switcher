@@ -20,20 +20,62 @@ import websockets
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
-# Ensure stdout/stderr exist and use UTF-8
+# Ensure stdout/stderr exist and are safe for pythonw.exe without crashing on OSError
 LOG_FILE = Path.home() / ".gemini" / "antigravity" / "quota_monitor.log"
-try:
-    if sys.stdout is None or not hasattr(sys.stdout, "write"):
-        sys.stdout = open(LOG_FILE, "a", encoding="utf-8", buffering=1)
-    elif hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-    if sys.stderr is None or not hasattr(sys.stderr, "write"):
-        sys.stderr = open(LOG_FILE, "a", encoding="utf-8", buffering=1)
-    elif hasattr(sys.stderr, "reconfigure"):
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-except Exception:
-    pass
+class SafeLogStream:
+    def __init__(self, log_path):
+        self.log_path = log_path
+        self._f = None
+        try:
+            self._f = open(log_path, "a", encoding="utf-8", buffering=1)
+        except Exception:
+            pass
+
+    def write(self, s):
+        try:
+            if self._f:
+                self._f.write(s)
+                self._f.flush()
+        except Exception:
+            pass
+
+    def flush(self):
+        try:
+            if self._f:
+                self._f.flush()
+        except Exception:
+            pass
+
+def init_safe_streams():
+    needs_redirect = False
+    if "pythonw" in (sys.executable or "").lower():
+        needs_redirect = True
+    else:
+        try:
+            if sys.stdout is None or not hasattr(sys.stdout, "write"):
+                needs_redirect = True
+            else:
+                sys.stdout.write(" ")
+                sys.stdout.flush()
+        except Exception:
+            needs_redirect = True
+
+    if needs_redirect:
+        safe_stream = SafeLogStream(LOG_FILE)
+        sys.stdout = safe_stream
+        sys.stderr = safe_stream
+    else:
+        try:
+            if hasattr(sys.stdout, "reconfigure"):
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            if hasattr(sys.stderr, "reconfigure"):
+                sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+init_safe_streams()
 
 def log(msg):
     ts = time.strftime('%Y-%m-%d %H:%M:%S')
@@ -42,6 +84,12 @@ def log(msg):
         with open(LOG_FILE, "a", encoding="utf-8") as f:
             f.write(line)
             f.flush()
+    except Exception:
+        pass
+    try:
+        if sys.stdout and sys.stdout is not None:
+            sys.stdout.write(line)
+            sys.stdout.flush()
     except Exception:
         pass
 
@@ -946,13 +994,18 @@ class QuotaHttpHandler(BaseHTTPRequestHandler):
                 parsed = urllib.parse.urlparse(self.path)
                 qs = urllib.parse.parse_qs(parsed.query)
                 mode = qs.get('mode', ['oauth'])[0]
-                ok, msg = cpm.trigger_codex_login(mode=mode)
+                api_key = qs.get('api_key', [None])[0]
+                ok, msg = cpm.trigger_codex_login(mode=mode, api_key=api_key)
+                if isinstance(msg, dict):
+                    resp = {'success': ok, 'auth_url': msg.get('auth_url'), 'message': msg.get('message', '')}
+                else:
+                    resp = {'success': ok, 'message': str(msg)}
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json; charset=utf-8')
                 self.send_header('Access-Control-Allow-Origin', '*')
                 self.send_header('Connection', 'close')
                 self.end_headers()
-                self.wfile.write(json.dumps({'success': ok, 'message': msg}, ensure_ascii=False).encode('utf-8'))
+                self.wfile.write(json.dumps(resp, ensure_ascii=False).encode('utf-8'))
             elif self.path == '/api/chatgpt/logout':
                 import chatgpt_account_manager as cpm
                 ok, msg = cpm.trigger_codex_logout()
@@ -1164,7 +1217,10 @@ class QuotaHttpHandler(BaseHTTPRequestHandler):
                 mode = data.get('mode', 'oauth')
                 api_key = data.get('api_key')
                 ok, msg = cpm.trigger_codex_login(mode=mode, api_key=api_key)
-                resp = {'success': ok, 'message': msg}
+                if isinstance(msg, dict):
+                    resp = {'success': ok, 'auth_url': msg.get('auth_url'), 'message': msg.get('message', '')}
+                else:
+                    resp = {'success': ok, 'message': str(msg)}
             elif self.path == '/api/chatgpt/logout':
                 import chatgpt_account_manager as cpm
                 ok, msg = cpm.trigger_codex_logout()
@@ -1696,7 +1752,7 @@ def refresh_all_accounts_tokens():
 
 def daemon_loop():
     kill_other_daemon_instances()
-    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [INFO] Antigravity Quota Monitor on-demand daemon active.", flush=True)
+    log("[INFO] Antigravity Quota Monitor on-demand daemon active.")
     # Start on-demand local HTTP server
     t = threading.Thread(target=start_http_server, daemon=True)
     t.start()
@@ -1704,7 +1760,7 @@ def daemon_loop():
     # Start native CDP IPC supervisor thread
     t_cdp = threading.Thread(target=start_cdp_supervisor, daemon=True)
     t_cdp.start()
-    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [CDP] Native CDP supervisor thread started.", flush=True)
+    log("[CDP] Native CDP supervisor thread started.")
 
     # Start ChatGPT & Codex CDP injector thread
     try:
@@ -1716,7 +1772,7 @@ def daemon_loop():
                 pass
         t_cpe = threading.Thread(target=_run_chatgpt_cdp, daemon=True)
         t_cpe.start()
-        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [CDP] ChatGPT & Codex CDP supervisor thread started.", flush=True)
+        log("[CDP] ChatGPT & Codex CDP supervisor thread started.")
     except Exception as e:
         pass
 
@@ -1726,7 +1782,7 @@ def daemon_loop():
         import psutil
         is_chatgpt_running = any('chatgpt' in (p.info.get('name') or '').lower() for p in psutil.process_iter(['name']))
         if is_chatgpt_running and not cpm.is_port_open(9223):
-            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [CDP] ChatGPT is running without DevTools port. Bootstrapping with port 9223...", flush=True)
+            log("[CDP] ChatGPT is running without DevTools port. Bootstrapping with port 9223...")
             cpm.launch_chatgpt(instance_num=1)
     except Exception:
         pass
@@ -1740,9 +1796,9 @@ def daemon_loop():
     # Initial sync & injection
     try:
         sync_quota_once(force=True, inject=True)
-        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SYNC] Initial quota sync & injection completed.", flush=True)
+        log("[SYNC] Initial quota sync & injection completed.")
     except Exception as e:
-        print(f"[ERROR] Initial sync error: {e}", flush=True)
+        log(f"[ERROR] Initial sync error: {e}")
 
     last_heartbeat_time = time.time()
     last_injected_port = None
@@ -1778,7 +1834,7 @@ def daemon_loop():
                 is_chatgpt_running = any('chatgpt' in (p.info.get('name') or '').lower() for p in psutil.process_iter(['name']))
                 if is_chatgpt_running and not cpm.is_port_open(9223):
                     last_chatgpt_relaunch_ts = now
-                    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [CDP] ChatGPT is running without DevTools port. Launching with port 9223...", flush=True)
+                    log("[CDP] ChatGPT is running without DevTools port. Launching with port 9223...")
                     cpm.launch_chatgpt(instance_num=1)
             except Exception:
                 pass
@@ -1789,7 +1845,7 @@ def daemon_loop():
             try:
                 refresh_all_accounts_tokens()
                 sync_quota_once(force=False)
-                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [HEARTBEAT] Passive quota heartbeat and account tokens refreshed.", flush=True)
+                log("[HEARTBEAT] Passive quota heartbeat and account tokens refreshed.")
             except Exception:
                 pass
 

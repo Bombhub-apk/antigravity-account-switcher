@@ -21,11 +21,45 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import quota_engine
 import migration_engine
 
-if hasattr(sys.stdout, 'reconfigure'):
+LOG_FILE = Path.home() / ".gemini" / "antigravity" / "server.log"
+LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+class SafeLogStream:
+    def __init__(self, log_path):
+        self.log_path = log_path
+        self._f = None
+        try:
+            self._f = open(log_path, "a", encoding="utf-8", buffering=1)
+        except Exception:
+            pass
+    def write(self, s):
+        try:
+            if self._f:
+                self._f.write(s)
+                self._f.flush()
+        except Exception:
+            pass
+    def flush(self):
+        try:
+            if self._f:
+                self._f.flush()
+        except Exception:
+            pass
+
+if "pythonw" in (sys.executable or "").lower():
+    safe_stream = SafeLogStream(LOG_FILE)
+    sys.stdout = safe_stream
+    sys.stderr = safe_stream
+else:
     try:
-        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stdout.write(" ")
+        sys.stdout.flush()
+        if hasattr(sys.stdout, 'reconfigure'):
+            sys.stdout.reconfigure(encoding='utf-8')
     except Exception:
-        pass
+        safe_stream = SafeLogStream(LOG_FILE)
+        sys.stdout = safe_stream
+        sys.stderr = safe_stream
 
 PORT = 39285
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1234,6 +1268,10 @@ class SwitcherHTTPHandler(SimpleHTTPRequestHandler):
                         pass
                 if not inst_acc or inst_acc not in saved:
                     # Match by instance_id in saved manifest
+                    for s_k, s_v in saved.items():
+                        if s_v.get('instance_id') == req_inst:
+                            inst_acc = s_k
+                            break
                 if not inst_acc:
                     primary = get_primary_account()
                     inst_acc = next((k for k in saved.keys() if k != primary), None)
@@ -1313,6 +1351,29 @@ class SwitcherHTTPHandler(SimpleHTTPRequestHandler):
             new_win = qs.get('new_window', ['0'])[0] in ('1', 'true')
             import chatgpt_account_manager as cpm
             ok, msg = cpm.launch_chatgpt(instance_num=inst, new_window=new_win)
+            self.wfile.write(json.dumps({'success': ok, 'message': msg}, ensure_ascii=False).encode('utf-8'))
+        elif parsed.path == '/api/chatgpt/login':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            qs = urllib.parse.parse_qs(parsed.query)
+            mode = qs.get('mode', ['oauth'])[0]
+            api_key = qs.get('api_key', [None])[0]
+            import chatgpt_account_manager as cpm
+            ok, msg = cpm.trigger_codex_login(mode=mode, api_key=api_key)
+            if isinstance(msg, dict):
+                resp = {'success': ok, 'auth_url': msg.get('auth_url'), 'message': msg.get('message', '')}
+            else:
+                resp = {'success': ok, 'message': str(msg)}
+            self.wfile.write(json.dumps(resp, ensure_ascii=False).encode('utf-8'))
+        elif parsed.path == '/api/chatgpt/logout':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            import chatgpt_account_manager as cpm
+            ok, msg = cpm.trigger_codex_logout()
             self.wfile.write(json.dumps({'success': ok, 'message': msg}, ensure_ascii=False).encode('utf-8'))
         elif parsed.path in ('/api/launch_dual', '/api/launch_instance'):
             self.send_response(200)
@@ -1442,7 +1503,10 @@ class SwitcherHTTPHandler(SimpleHTTPRequestHandler):
             mode = data.get('mode', 'oauth')
             api_key = data.get('api_key')
             ok, msg = cpm.trigger_codex_login(mode=mode, api_key=api_key)
-            resp = {'success': ok, 'message': msg}
+            if isinstance(msg, dict):
+                resp = {'success': ok, 'auth_url': msg.get('auth_url'), 'message': msg.get('message', '')}
+            else:
+                resp = {'success': ok, 'message': str(msg)}
         elif self.path == '/api/chatgpt/logout':
             import chatgpt_account_manager as cpm
             ok, msg = cpm.trigger_codex_logout()

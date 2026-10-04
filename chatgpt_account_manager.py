@@ -296,12 +296,18 @@ def switch_profile(profile_id):
         return False, f"Profile '{clean_id}' does not have an auth.json file."
 
     try:
-        # 1. Backup current active auth.json
+        # 1. Automatically snapshot and sync current active profile before switching so no session is lost
+        cur_settings = load_settings()
+        cur_active = cur_settings.get("active_profile")
+        if cur_active and AUTH_JSON_PATH.exists():
+            save_current_profile(cur_active)
+
+        # 2. Backup current active auth.json
         if AUTH_JSON_PATH.exists():
             backup_path = CODEX_HOME / "auth.json.bak"
             shutil.copy2(AUTH_JSON_PATH, backup_path)
 
-        # 2. Swap auth.json
+        # 3. Swap auth.json
         shutil.copy2(target_auth, AUTH_JSON_PATH)
 
         # 3. Update settings
@@ -328,37 +334,142 @@ def restart_codex_app_server():
         except Exception:
             pass
 
+def open_system_url(url):
+    """Opens a URL using multiple OS-native mechanisms for reliability."""
+    opened = False
+    if sys.platform == "win32":
+        try:
+            os.startfile(url)
+            opened = True
+        except Exception:
+            pass
+        if not opened:
+            try:
+                subprocess.Popen(f'start "" "{url}"', shell=True)
+                opened = True
+            except Exception:
+                pass
+    if not opened:
+        try:
+            import webbrowser
+            webbrowser.open(url)
+            opened = True
+        except Exception:
+            pass
+    return opened
+
 def trigger_codex_login(mode='oauth', api_key=None):
     """
     Triggers Codex / ChatGPT login flow:
-    - 'oauth': launches `codex login` which opens default browser for official OpenAI OAuth.
+    - 'oauth': launches `codex login`, captures OAuth URL, opens browser directly,
+               and waits asynchronously for login completion to update auth.json.
     - 'api_key': authenticates using OpenAI API Key via `codex login --with-api-key`.
     - 'web': opens official ChatGPT web sign-in page.
     """
+    import threading, re
     codex_cli = get_codex_cli_path()
+
     if mode == 'api_key' and api_key:
         try:
             res = subprocess.run(
-                [codex_cli, "login", "--with-api-key"],
+                [codex_cli, 'login', '--with-api-key'],
                 input=api_key.strip(),
                 capture_output=True,
                 text=True,
                 timeout=15
             )
             restart_codex_app_server()
-            return (res.returncode == 0), res.stdout.strip() or res.stderr.strip() or "API Key authenticated."
+            return (res.returncode == 0), res.stdout.strip() or res.stderr.strip() or 'API Key authenticated.'
         except Exception as e:
             return False, str(e)
     elif mode == 'web':
-        import webbrowser
-        webbrowser.open("https://chatgpt.com/auth/login")
-        return True, "Opened ChatGPT login page in browser."
+        try:
+            open_system_url("https://chatgpt.com/auth/login")
+            return True, {"auth_url": "https://chatgpt.com/auth/login", "message": "Opened ChatGPT web sign-in page in browser."}
+        except Exception as e:
+            return False, str(e)
     else:  # oauth (default)
         try:
-            DETACHED_PROCESS = 0x00000008 if sys.platform == 'win32' else 0
-            CREATE_NEW_PROCESS_GROUP = 0x00000200 if sys.platform == 'win32' else 0
-            subprocess.Popen([codex_cli, "login"], creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
-            return True, "OAuth login launched. Complete sign-in in your default browser."
+            # Terminate any hung codex login processes first (ensure never killing self or python)
+            try:
+                import psutil
+                my_pid = os.getpid()
+                for p in psutil.process_iter(['pid', 'name', 'cmdline']):
+                    try:
+                        if p.info.get('pid') == my_pid:
+                            continue
+                        pname = (p.info.get('name') or '').lower()
+                        if 'codex' not in pname:
+                            continue
+                        cmd = ' '.join(p.info.get('cmdline') or []).lower()
+                        if 'login' in cmd and '--with' not in cmd:
+                            p.terminate()
+                            p.wait(timeout=2)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            p = subprocess.Popen(
+                [codex_cli, 'login'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL,
+                text=True,
+                bufsize=1
+            )
+
+            import queue
+            q = queue.Queue()
+            def _drain_stderr(stream):
+                try:
+                    for l in iter(stream.readline, ''):
+                        q.put(l)
+                except Exception:
+                    pass
+
+            t_drain = threading.Thread(target=_drain_stderr, args=(p.stderr,), daemon=True)
+            t_drain.start()
+
+            auth_url = None
+            start_t = time.time()
+            while time.time() - start_t < 10:
+                try:
+                    line = q.get(timeout=0.3)
+                    match = re.search(r'https://auth\.openai\.com/\S+', line)
+                    if match:
+                        auth_url = match.group(0).strip()
+                        break
+                except queue.Empty:
+                    if p.poll() is not None:
+                        break
+
+            if auth_url:
+                open_system_url(auth_url)
+
+                def _supervise_login(proc):
+                    try:
+                        # Communicate safely drains both stdout and stderr to prevent deadlocks
+                        stdout_data, stderr_data = proc.communicate(timeout=240)
+                        if proc.returncode == 0:
+                            time.sleep(1.0)
+                            restart_codex_app_server()
+                            meta = read_active_auth_metadata()
+                            if meta.get('exists') and meta.get('email'):
+                                c_id = meta['email'].split('@')[0].lower()
+                                save_current_profile(c_id, display_name=meta['email'], email=meta['email'])
+                    except Exception:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+
+                t = threading.Thread(target=_supervise_login, args=(p,), daemon=True)
+                t.start()
+                return True, {"auth_url": auth_url, "message": "Browser opened for OpenAI OAuth sign-in."}
+            else:
+                open_system_url("https://chatgpt.com/auth/login")
+                return True, {"auth_url": "https://chatgpt.com/auth/login", "message": "Opened ChatGPT web sign-in."}
         except Exception as e:
             return False, str(e)
 
