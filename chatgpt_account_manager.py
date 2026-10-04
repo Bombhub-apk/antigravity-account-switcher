@@ -248,6 +248,18 @@ def list_profiles():
         except Exception:
             pass
 
+    # Self-healing: If auth.json is missing or was unlinked, but a saved profile exists, restore it automatically
+    if not active_meta.get("exists"):
+        candidate_auth = PROFILES_DIR / active_profile_id / "auth.json"
+        if not candidate_auth.exists() and (PROFILES_DIR / "default" / "auth.json").exists():
+            candidate_auth = PROFILES_DIR / "default" / "auth.json"
+        if candidate_auth.exists():
+            try:
+                shutil.copy2(candidate_auth, AUTH_JSON_PATH)
+                active_meta = read_active_auth_metadata()
+            except Exception:
+                pass
+
     return {
         "active_profile": active_profile_id,
         "active_meta": active_meta,
@@ -321,16 +333,20 @@ def switch_profile(profile_id):
         return False, str(e)
 
 def restart_codex_app_server():
-    """Kills existing codex background daemon so it reloads the new auth.json."""
+    """Signals standalone codex background processes to reload without terminating ChatGPT's child process."""
     if sys.platform == "win32":
         try:
-            # Kill codex app-server processes gracefully
-            subprocess.run(
-                ["powershell", "-Command", "Get-Process codex -ErrorAction SilentlyContinue | Where-Object { $_.Path -match 'Codex' } | Stop-Process -Force -ErrorAction SilentlyContinue"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=5
-            )
+            import psutil
+            for p in psutil.process_iter(['pid', 'name']):
+                try:
+                    if 'codex' in (p.info.get('name') or '').lower():
+                        parent = p.parent()
+                        # CRITICAL: Never terminate ChatGPT's internal child! Doing so severs its RPC connection and drops the desktop session.
+                        if parent and 'chatgpt' in (parent.name() or '').lower():
+                            continue
+                        p.terminate()
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -474,26 +490,38 @@ def trigger_codex_login(mode='oauth', api_key=None):
             return False, str(e)
 
 def trigger_codex_logout():
-    """Removes stored authentication credentials and resets active session."""
+    """Removes active credentials safely while preserving the profile in ~/.codex/profiles/."""
+    # 1. Snapshot active session before logout so it can be restored anytime
+    try:
+        cur_settings = load_settings()
+        cur_active = cur_settings.get("active_profile", "default")
+        if AUTH_JSON_PATH.exists():
+            save_current_profile(cur_active)
+            backup_path = CODEX_HOME / "auth.json.bak"
+            shutil.copy2(AUTH_JSON_PATH, backup_path)
+            AUTH_JSON_PATH.unlink()
+    except Exception:
+        pass
+
     codex_cli = get_codex_cli_path()
     try:
         subprocess.run([codex_cli, "logout"], capture_output=True, timeout=10)
     except Exception:
         pass
 
-    if AUTH_JSON_PATH.exists():
-        try:
-            backup_path = CODEX_HOME / "auth.json.bak"
-            shutil.copy2(AUTH_JSON_PATH, backup_path)
-            AUTH_JSON_PATH.unlink()
-        except Exception:
-            pass
-
     restart_codex_app_server()
-    return True, "Logged out successfully. You can now log into another account."
+    return True, "Logged out successfully. Active session safely preserved in profile storage."
 
 def is_port_open(port):
-    """Checks if a TCP port is open locally across candidate interfaces."""
+    """Checks if a TCP port is open locally across net connections and candidate interfaces."""
+    try:
+        import psutil
+        for conn in psutil.net_connections(kind='tcp'):
+            if conn.status == psutil.CONN_LISTEN and conn.laddr.port == int(port):
+                return True
+    except Exception:
+        pass
+
     hosts = ["127.0.0.1", "localhost"]
     try:
         hostname = socket.gethostname()
@@ -505,7 +533,7 @@ def is_port_open(port):
     for host in hosts:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(0.3)
+                s.settimeout(0.2)
                 if s.connect_ex((host, int(port))) == 0:
                     return True
         except Exception:
@@ -522,16 +550,7 @@ def launch_chatgpt(instance_num=1, new_window=False, workspace_path=None):
     port = settings.get("devtools_port_1", 9223) if instance_num == 1 else settings.get("devtools_port_2", 9224)
 
     if sys.platform == "win32" and instance_num == 1 and not new_window:
-        # If port is not listening yet, close any uninstrumented background instance first
-        if not is_port_open(port):
-            try:
-                subprocess.run(
-                    ["powershell", "-NoProfile", "-Command", "Stop-Process -Name ChatGPT -Force -ErrorAction SilentlyContinue"],
-                    timeout=5
-                )
-                time.sleep(1.2)
-            except Exception:
-                pass
+        # Launch or bring to front with remote-debugging-port (never force-kill running instance)
         try:
             subprocess.run(
                 ["powershell", "-NoProfile", "-Command", f"Start-Process -FilePath 'shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App' -ArgumentList '--remote-debugging-port={port}'"],

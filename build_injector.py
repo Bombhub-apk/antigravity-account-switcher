@@ -1210,6 +1210,8 @@ template = '''// ChatGPT Desktop & Codex Enhanced UI Suite (Ultimate Persian & M
       const activeMeta = (d && d.profiles && d.profiles.active_meta) ? d.profiles.active_meta : {};
       const hasActive = activeMeta && activeMeta.exists;
       const currentEmail = activeMeta.email || 'ناشناس';
+      const profileList = (d && d.profiles && Array.isArray(d.profiles.profiles)) ? d.profiles.profiles : [];
+      const savedProfile = profileList.find(p => p.has_auth);
 
       container.innerHTML = `
         <div style="width: 100%;">
@@ -1222,6 +1224,19 @@ template = '''// ChatGPT Desktop & Codex Enhanced UI Suite (Ultimate Persian & M
             <span style="font-size: 12px; font-weight: 700; color: #00f0ff;">${hasActive ? currentEmail : 'وارد نشده'}</span>
           </div>
 
+          ${(!hasActive && savedProfile) ? `
+          <!-- Quick Restore Saved Profile Banner -->
+          <div style="padding: 10px 14px; background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 12px; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
+            <div>
+              <div style="font-weight: 700; font-size: 12px; color: #10b981;">نشست ذخیره‌شده آماده: ${savedProfile.email}</div>
+              <div style="font-size: 11px; color: #94a3b8;">می‌توانید فوراً این اکانت را فعال و بازیابی کنید.</div>
+            </div>
+            <button id="cpe-btn-quick-restore" style="padding: 6px 12px; background: #10b981; color: #000; font-weight: 700; border: none; border-radius: 8px; font-size: 11.5px; cursor: pointer; font-family: inherit;">
+              ⚡️ فعال‌سازی سریع
+            </button>
+          </div>
+          ` : ''}
+
           <!-- Option 1: Browser OAuth Login -->
           <div style="padding: 14px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; margin-bottom: 12px;">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
@@ -1232,13 +1247,16 @@ template = '''// ChatGPT Desktop & Codex Enhanced UI Suite (Ultimate Persian & M
               <span style="font-size: 10.5px; padding: 2px 8px; border-radius: 6px; background: rgba(0, 240, 255, 0.12); color: #00f0ff; border: 1px solid rgba(0, 240, 255, 0.3);">پیشنهادی</span>
             </div>
             <div style="font-size: 11.5px; color: #94a3b8; line-height: 1.5; margin-bottom: 10px;">
-              صفحه استاندارد ورود OpenAI در مرورگر باز می‌شود. پس از ورود با اکانت مورد نظر، نشست به طور خودکار به برنامه منتقل می‌شود.
+              ورود استاندارد رسمی با مرورگر. هم برای نرم‌افزار دسکتاپ و هم نشست کلاینت ذخیره می‌شود.
             </div>
+            <button id="cpe-btn-app-signin" style="width: 100%; margin-bottom: 8px; padding: 10px; background: rgba(0, 240, 255, 0.15); border: 1px solid rgba(0, 240, 255, 0.4); color: #00f0ff; font-weight: 700; border-radius: 10px; cursor: pointer; font-size: 12.5px; font-family: inherit; transition: all 0.2s ease;">
+              🚀 ورود رسمی در پنجره ChatGPT (Continue to sign in)
+            </button>
             <div style="display: flex; gap: 8px;">
-              <button id="cpe-btn-oauth-login" style="flex: 1; padding: 10px; background: #00f0ff; color: #000; font-weight: 700; border: none; border-radius: 10px; cursor: pointer; font-size: 12.5px; font-family: inherit; transition: all 0.2s ease;">
-                🔑 شروع ورود از طریق مرورگر (codex login)
+              <button id="cpe-btn-oauth-login" style="flex: 1; padding: 9px 12px; background: #00f0ff; color: #000; font-weight: 700; border: none; border-radius: 10px; cursor: pointer; font-size: 12px; font-family: inherit; transition: all 0.2s ease;">
+                🔑 شروع لاگین با مرورگر (codex login)
               </button>
-              <button id="cpe-btn-web-login" style="padding: 10px 14px; background: rgba(255,255,255,0.08); color: #cbd5e1; font-weight: 600; border: 1px solid rgba(255,255,255,0.15); border-radius: 10px; cursor: pointer; font-size: 11.5px; font-family: inherit; transition: all 0.2s ease;" title="ورود مستقیم به وبسایت ChatGPT">
+              <button id="cpe-btn-web-login" style="padding: 9px 12px; background: rgba(255,255,255,0.08); color: #cbd5e1; font-weight: 600; border: 1px solid rgba(255,255,255,0.15); border-radius: 10px; cursor: pointer; font-size: 11.5px; font-family: inherit; transition: all 0.2s ease;" title="ورود مستقیم به وبسایت ChatGPT">
                 🌐 وب ChatGPT
               </button>
             </div>
@@ -1295,12 +1313,50 @@ template = '''// ChatGPT Desktop & Codex Enhanced UI Suite (Ultimate Persian & M
       `;
 
       // Option 1 OAuth actions & polling
+      const btnAppSignin = document.getElementById('cpe-btn-app-signin');
+      const btnQuickRestore = document.getElementById('cpe-btn-quick-restore');
       const btnOAuth = document.getElementById('cpe-btn-oauth-login');
       const btnWebLogin = document.getElementById('cpe-btn-web-login');
       const directBox = document.getElementById('cpe-oauth-direct-box');
       const directInp = document.getElementById('cpe-oauth-url-inp');
       const btnCopyOauth = document.getElementById('cpe-btn-copy-oauth');
       const btnOpenOauth = document.getElementById('cpe-btn-open-oauth');
+
+      if (btnAppSignin) {
+        btnAppSignin.onclick = () => {
+          const btns = Array.from(document.querySelectorAll('button'));
+          const nativeBtn = btns.find(b => b.innerText && (b.innerText.includes('Continue to sign in') || b.innerText.includes('Sign in')));
+          if (nativeBtn && !nativeBtn.id.startsWith('cpe-')) {
+            nativeBtn.click();
+            showToast('🚀 ورود رسمی نرم‌افزار فعال شد. لطفاً در مرورگر لاگین کنید.');
+          } else {
+            window.open('https://chatgpt.com/auth/login', '_blank');
+            showToast('🌐 صفحه رسمی ورود ChatGPT باز شد.');
+          }
+        };
+      }
+
+      if (btnQuickRestore && savedProfile) {
+        btnQuickRestore.onclick = async () => {
+          btnQuickRestore.disabled = true;
+          btnQuickRestore.textContent = '⏳ ...';
+          try {
+            const resp = await window.callCpeBackend('switch', { profile: savedProfile.id });
+            if (resp && resp.success) {
+              showToast('✅ نشست با موفقیت بازیابی و فعال شد');
+              setTimeout(() => window.location.reload(), 800);
+            } else {
+              showToast(`❌ خطا: ${(resp && resp.message) || 'ناموفق'}`, true);
+              btnQuickRestore.disabled = false;
+              btnQuickRestore.textContent = '⚡️ فعال‌سازی سریع';
+            }
+          } catch(e) {
+            showToast(`خطا: ${e.message}`, true);
+            btnQuickRestore.disabled = false;
+            btnQuickRestore.textContent = '⚡️ فعال‌سازی سریع';
+          }
+        };
+      }
 
       if (btnWebLogin) {
         btnWebLogin.onclick = () => {
