@@ -1720,6 +1720,17 @@ def daemon_loop():
     except Exception as e:
         pass
 
+    # Ensure ChatGPT Desktop has DevTools port enabled if already open on boot
+    try:
+        import chatgpt_account_manager as cpm
+        import psutil
+        is_chatgpt_running = any('chatgpt' in (p.info.get('name') or '').lower() for p in psutil.process_iter(['name']))
+        if is_chatgpt_running and not cpm.is_port_open(9223):
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [CDP] ChatGPT is running without DevTools port. Bootstrapping with port 9223...", flush=True)
+            cpm.launch_chatgpt(instance_num=1)
+    except Exception:
+        pass
+
     # Refresh tokens for all saved accounts on startup
     try:
         refresh_all_accounts_tokens()
@@ -1758,6 +1769,19 @@ def daemon_loop():
                 last_injected_port = None
         except Exception:
             pass
+
+        # Check if ChatGPT was launched without DevTools port (safe cooldown: 5 minutes)
+        if now - last_chatgpt_relaunch_ts > 300:
+            try:
+                import chatgpt_account_manager as cpm
+                import psutil
+                is_chatgpt_running = any('chatgpt' in (p.info.get('name') or '').lower() for p in psutil.process_iter(['name']))
+                if is_chatgpt_running and not cpm.is_port_open(9223):
+                    last_chatgpt_relaunch_ts = now
+                    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [CDP] ChatGPT is running without DevTools port. Launching with port 9223...", flush=True)
+                    cpm.launch_chatgpt(instance_num=1)
+            except Exception:
+                pass
 
         # 3. Passive keepalive heartbeat and token refresh every 15 minutes (900 seconds)
         if now - last_heartbeat_time >= 900:

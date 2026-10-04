@@ -382,28 +382,51 @@ def trigger_codex_logout():
     return True, "Logged out successfully. You can now log into another account."
 
 def is_port_open(port):
-    """Checks if a TCP port is open locally."""
+    """Checks if a TCP port is open locally across candidate interfaces."""
+    hosts = ["127.0.0.1", "localhost"]
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(0.5)
-            return s.connect_ex(('127.0.0.1', int(port))) == 0
+        hostname = socket.gethostname()
+        for ip in socket.gethostbyname_ex(hostname)[2]:
+            if ip not in hosts:
+                hosts.append(ip)
     except Exception:
-        return False
+        pass
+    for host in hosts:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(0.3)
+                if s.connect_ex((host, int(port))) == 0:
+                    return True
+        except Exception:
+            pass
+    return False
 
 def launch_chatgpt(instance_num=1, new_window=False, workspace_path=None):
     """
-    Launches ChatGPT Desktop safely without crashing:
-    - instance_num 1: Standard profile launched via official Store AppContainer or Codex CLI
+    Launches ChatGPT Desktop safely with remote debugging instrumentation:
+    - instance_num 1: Standard profile launched via official Store AppContainer with DevTools port
     - instance_num 2: Isolated user-data-dir
-    Never kills running ChatGPT processes in background!
     """
+    settings = load_settings()
+    port = settings.get("devtools_port_1", 9223) if instance_num == 1 else settings.get("devtools_port_2", 9224)
+
     if sys.platform == "win32" and instance_num == 1 and not new_window:
+        # If port is not listening yet, close any uninstrumented background instance first
+        if not is_port_open(port):
+            try:
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-Command", "Stop-Process -Name ChatGPT -Force -ErrorAction SilentlyContinue"],
+                    timeout=5
+                )
+                time.sleep(1.2)
+            except Exception:
+                pass
         try:
             subprocess.run(
-                ["powershell", "-NoProfile", "-Command", "Start-Process 'shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App'"],
+                ["powershell", "-NoProfile", "-Command", f"Start-Process -FilePath 'shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App' -ArgumentList '--remote-debugging-port={port}'"],
                 timeout=5
             )
-            return True, "Launched ChatGPT Instance 1 via Windows Application Manager"
+            return True, f"Launched ChatGPT Instance 1 via Windows Application Manager with DevTools port {port}"
         except Exception:
             pass
 

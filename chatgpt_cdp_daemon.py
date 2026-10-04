@@ -54,17 +54,40 @@ def load_injector_script():
         logger.error(f"Failed to read injector script: {e}")
         return ""
 
-def get_open_targets(port):
-    """Fetches list of debuggable targets from Chromium DevTools port."""
-    url = f"http://127.0.0.1:{port}/json/list"
+def get_candidate_hosts(port):
+    """Returns candidate IPs to probe for DevTools on Windows and POSIX."""
+    hosts = ["127.0.0.1", "localhost"]
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "ChatGPT-Enhanced-Daemon"})
-        with urllib.request.urlopen(req, timeout=1.5) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            if isinstance(data, list):
-                return data
+        import socket
+        hostname = socket.gethostname()
+        for ip in socket.gethostbyname_ex(hostname)[2]:
+            if ip not in hosts:
+                hosts.append(ip)
     except Exception:
         pass
+    try:
+        import psutil
+        for conn in psutil.net_connections(kind='tcp'):
+            if conn.status == psutil.CONN_LISTEN and conn.laddr.port == port:
+                ip = conn.laddr.ip
+                if ip and ip not in ("0.0.0.0", "::") and ip not in hosts:
+                    hosts.insert(0, ip)
+    except Exception:
+        pass
+    return hosts
+
+def get_open_targets(port):
+    """Fetches list of debuggable targets from Chromium DevTools port across candidate interfaces."""
+    for host in get_candidate_hosts(port):
+        url = f"http://{host}:{port}/json/list"
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "ChatGPT-Enhanced-Daemon"})
+            with urllib.request.urlopen(req, timeout=1.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                if isinstance(data, list) and data:
+                    return data
+        except Exception:
+            pass
     return []
 
 def is_valid_chatgpt_target(t):
