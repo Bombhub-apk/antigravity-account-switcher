@@ -540,29 +540,53 @@ def is_port_open(port):
             pass
     return False
 
+def bring_chatgpt_to_front():
+    """Brings existing ChatGPT window to front if running."""
+    if sys.platform == "win32":
+        try:
+            ps_cmd = (
+                "$p = Get-Process ChatGPT -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1; "
+                "if ($p) { "
+                "$sig = '[DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr hWnd); [DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);'; "
+                "$type = Add-Type -MemberDefinition $sig -Name W32Win -Namespace W32Win -PassThru; "
+                "$type::ShowWindow($p.MainWindowHandle, 9); "
+                "$type::SetForegroundWindow($p.MainWindowHandle); "
+                "}"
+            )
+            subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], timeout=3, capture_output=True)
+        except Exception:
+            pass
+
 def launch_chatgpt(instance_num=1, new_window=False, workspace_path=None):
     """
     Launches ChatGPT Desktop safely with remote debugging instrumentation:
-    - instance_num 1: Standard profile launched via official Store AppContainer with DevTools port
+    - instance_num 1: Standard profile launched with DevTools port
     - instance_num 2: Isolated user-data-dir
     """
     settings = load_settings()
     port = settings.get("devtools_port_1", 9223) if instance_num == 1 else settings.get("devtools_port_2", 9224)
 
-    if sys.platform == "win32" and instance_num == 1 and not new_window:
+    # 1. If instance 1 is already running WITH the port open and not requesting new_window, just focus it
+    if instance_num == 1 and not new_window and is_port_open(port):
+        bring_chatgpt_to_front()
+        return True, f"ChatGPT is already running with DevTools port {port} active."
+
+    # 2. If running without the debugging port, close the uninstrumented instance so port can bind
+    if instance_num == 1 and not is_port_open(port) and sys.platform == "win32":
         import psutil
         is_running = any('chatgpt' in (p.info.get('name') or '').lower() for p in psutil.process_iter(['name']))
-        # If running without debugging port, close the uninstrumented window gracefully so it launches with port
-        if is_running and not is_port_open(port):
+        if is_running:
             try:
                 subprocess.run(
-                    ["powershell", "-NoProfile", "-Command", "Get-Process ChatGPT -ErrorAction SilentlyContinue | Stop-Process -ErrorAction SilentlyContinue"],
-                    timeout=5
+                    ["powershell", "-NoProfile", "-Command", "Get-Process ChatGPT -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue"],
+                    timeout=5,
+                    capture_output=True
                 )
-                time.sleep(1.0)
+                time.sleep(1.2)
             except Exception:
                 pass
 
+    if sys.platform == "win32" and instance_num == 1 and not new_window:
         try:
             subprocess.run(
                 ["powershell", "-NoProfile", "-Command", f"Start-Process -FilePath 'shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App' -ArgumentList '--remote-debugging-port={port}'"],
@@ -581,10 +605,12 @@ def launch_chatgpt(instance_num=1, new_window=False, workspace_path=None):
         subprocess.Popen(cmd)
         return True, "Launched via Codex CLI"
 
-    settings = load_settings()
-    port = settings.get("devtools_port_1", 9223) if instance_num == 1 else settings.get("devtools_port_2", 9224)
+    cmd = [
+        exe,
+        f"--remote-debugging-port={port}",
+        "--enable-features=DevToolsWebMCPSupport"
+    ]
 
-    cmd = [exe]
     if instance_num == 2:
         INSTANCE2_USER_DATA.mkdir(parents=True, exist_ok=True)
         cmd.append(f'--user-data-dir={INSTANCE2_USER_DATA}')
@@ -596,12 +622,19 @@ def launch_chatgpt(instance_num=1, new_window=False, workspace_path=None):
         cmd.append(str(workspace_path))
 
     try:
-        root_dir = str(Path(exe).parent.parent) if "WindowsApps" in exe else str(Path(exe).parent)
+        app_dir = str(Path(exe).parent)
         if sys.platform == "win32":
-            subprocess.Popen(cmd, cwd=root_dir)
+            DETACHED_PROCESS = 0x00000008
+            CREATE_NEW_PROCESS_GROUP = 0x00000200
+            subprocess.Popen(
+                cmd,
+                cwd=app_dir,
+                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+                close_fds=True
+            )
         else:
-            subprocess.Popen(cmd, cwd=root_dir, start_new_session=True)
-        return True, f"Launched ChatGPT Instance {instance_num}"
+            subprocess.Popen(cmd, cwd=app_dir, start_new_session=True)
+        return True, f"Launched ChatGPT Instance {instance_num} with DevTools port {port}"
     except Exception as e:
         return False, str(e)
 
