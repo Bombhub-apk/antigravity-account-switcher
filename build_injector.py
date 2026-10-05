@@ -46,12 +46,36 @@ template = '''// ChatGPT Desktop & Codex Enhanced UI Suite (Ultimate Persian & M
   const ESTEDAD_B64 = "__ESTEDAD_B64__";
   const OUTFIT_B64 = "__OUTFIT_B64__";
 
+  function safeAppend(el) {
+    if (!el) return false;
+    const parent = document.head || document.documentElement || document.body;
+    if (parent) {
+      if (!parent.contains(el)) {
+        parent.appendChild(el);
+      }
+      return true;
+    }
+    return false;
+  }
+
+  function ensureAppended(el) {
+    if (safeAppend(el)) return;
+    const appendWhenReady = () => {
+      safeAppend(el);
+    };
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', appendWhenReady, { once: true });
+    } else {
+      window.addEventListener('load', appendWhenReady, { once: true });
+    }
+  }
+
   function injectBase64Fonts() {
     let fontStyle = document.getElementById('cpe-embedded-fonts');
     if (!fontStyle) {
       fontStyle = document.createElement('style');
       fontStyle.id = 'cpe-embedded-fonts';
-      (document.head || document.documentElement).appendChild(fontStyle);
+      ensureAppended(fontStyle);
     }
     fontStyle.textContent = `
       @font-face {
@@ -263,7 +287,7 @@ template = '''// ChatGPT Desktop & Codex Enhanced UI Suite (Ultimate Persian & M
   if (!dynamicStyleEl) {
     dynamicStyleEl = document.createElement('style');
     dynamicStyleEl.id = 'cpe-dynamic-styles';
-    (document.head || document.documentElement).appendChild(dynamicStyleEl);
+    ensureAppended(dynamicStyleEl);
   }
 
   function applyThemeAndFont() {
@@ -788,6 +812,8 @@ template = '''// ChatGPT Desktop & Codex Enhanced UI Suite (Ultimate Persian & M
     const parentEl = document.body || document.documentElement;
     if (parentEl) {
       parentEl.appendChild(hud);
+    } else {
+      ensureAppended(hud);
     }
 
     // Restore saved position
@@ -920,7 +946,7 @@ template = '''// ChatGPT Desktop & Codex Enhanced UI Suite (Ultimate Persian & M
       pointer-events: none;
     `;
     t.textContent = msg;
-    (document.body || document.documentElement).appendChild(t);
+    ensureAppended(t);
     setTimeout(() => {
       if (t) {
         t.style.opacity = '0';
@@ -948,7 +974,7 @@ template = '''// ChatGPT Desktop & Codex Enhanced UI Suite (Ultimate Persian & M
       </div>
     `;
 
-    (document.body || document.documentElement).appendChild(overlay);
+    ensureAppended(overlay);
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) overlay.classList.remove('cpe-open');
     });

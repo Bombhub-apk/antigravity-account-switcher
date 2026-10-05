@@ -1766,10 +1766,12 @@ def daemon_loop():
     try:
         import chatgpt_cdp_daemon
         def _run_chatgpt_cdp():
-            try:
-                asyncio.run(chatgpt_cdp_daemon.daemon_loop())
-            except Exception as ex:
-                pass
+            while True:
+                try:
+                    asyncio.run(chatgpt_cdp_daemon.daemon_loop(poll_interval=0.4))
+                except Exception as ex:
+                    log(f"[CDP] ChatGPT CDP daemon restarted after error: {ex}")
+                    time.sleep(1.0)
         t_cpe = threading.Thread(target=_run_chatgpt_cdp, daemon=True)
         t_cpe.start()
         log("[CDP] ChatGPT & Codex CDP supervisor thread started.")

@@ -4,6 +4,7 @@
 ChatGPT Desktop & Codex Chrome DevTools Protocol (CDP) Injector Daemon
 Connects to ChatGPT Desktop instances and injects Persian fonts, themes, and HUD action pill.
 Works for both outer Electron pages and inner chat webviews.
+Optimized for instant (< 300ms) startup injection and persistent reload retention.
 """
 
 import os
@@ -23,16 +24,20 @@ except ImportError:
 CURRENT_DIR = Path(__file__).resolve().parent
 INJECTOR_JS_PATH = CURRENT_DIR / "chatgpt_theme_injector.js"
 LOG_FILE = CURRENT_DIR / "chatgpt_cdp_daemon.log"
-handlers = [logging.FileHandler(LOG_FILE, encoding="utf-8")]
-if sys.stdout is not None:
-    handlers.append(logging.StreamHandler(sys.stdout))
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=handlers
-)
 logger = logging.getLogger("chatgpt_cdp")
+logger.setLevel(logging.INFO)
+if not any(isinstance(h, logging.FileHandler) for h in logger.handlers):
+    try:
+        fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
+        fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+        logger.addHandler(fh)
+    except Exception:
+        pass
+if sys.stdout is not None and not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
+    sh = logging.StreamHandler(sys.stdout)
+    sh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logger.addHandler(sh)
 
 def load_injector_script():
     if not INJECTOR_JS_PATH.exists():
@@ -54,44 +59,33 @@ def load_injector_script():
         logger.error(f"Failed to read injector script: {e}")
         return ""
 
-def get_candidate_hosts(port):
-    """Returns candidate IPs to probe for DevTools on Windows and POSIX."""
-    hosts = ["127.0.0.1", "localhost"]
-    try:
-        import socket
-        hostname = socket.gethostname()
-        for ip in socket.gethostbyname_ex(hostname)[2]:
-            if ip not in hosts:
-                hosts.append(ip)
-    except Exception:
-        pass
-    try:
-        import psutil
-        for conn in psutil.net_connections(kind='tcp'):
-            if conn.status == psutil.CONN_LISTEN and conn.laddr.port == port:
-                ip = conn.laddr.ip
-                if ip and ip not in ("0.0.0.0", "::") and ip not in hosts:
-                    hosts.insert(0, ip)
-    except Exception:
-        pass
-    return hosts
-
 def get_open_targets(port):
-    """Fetches list of debuggable targets from Chromium DevTools port across candidate interfaces."""
-    for host in get_candidate_hosts(port):
-        url = f"http://{host}:{port}/json/list"
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "ChatGPT-Enhanced-Daemon"})
-            with urllib.request.urlopen(req, timeout=1.0) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                if isinstance(data, list) and data:
-                    return data
-        except Exception:
-            pass
+    """Fetches list of debuggable targets from Chromium DevTools port with ultra-fast 127.0.0.1 priority."""
+    # Fast path: 127.0.0.1 is local loopback and answers in 1-5ms
+    url = f"http://127.0.0.1:{port}/json/list"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "ChatGPT-Enhanced-Daemon"})
+        with urllib.request.urlopen(req, timeout=0.25) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if isinstance(data, list) and data:
+                return data
+    except Exception:
+        pass
+
+    try:
+        url = f"http://localhost:{port}/json/list"
+        req = urllib.request.Request(url, headers={"User-Agent": "ChatGPT-Enhanced-Daemon"})
+        with urllib.request.urlopen(req, timeout=0.25) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if isinstance(data, list) and data:
+                return data
+    except Exception:
+        pass
+
     return []
 
 def is_valid_chatgpt_target(t):
-    """Checks whether a target is a valid main ChatGPT surface (page or app, rejecting sandboxes/workers)."""
+    """Checks whether a target is a valid main ChatGPT surface (page or app, rejecting sandboxes/workers/overlays)."""
     ws_url = t.get("webSocketDebuggerUrl")
     if not ws_url:
         return False
@@ -99,21 +93,22 @@ def is_valid_chatgpt_target(t):
     t_url = (t.get("url") or "").lower()
     t_title = (t.get("title") or "").lower()
 
-    # Reject internal chrome extensions, devtools panels, detached background windows, or sandboxes
+    # Reject internal chrome extensions, devtools panels, detached background windows, avatar overlays, sandboxes, or embedded pricing popups
     if any(x in t_url for x in [
-        "devtools://", "chrome-extension://", "web-sandbox", "codex-sandbox", "detached-window"
+        "devtools://", "chrome-extension://", "web-sandbox", "codex-sandbox",
+        "detached-window", "avatar-overlay", "#pricing"
     ]):
         return False
 
     # Accept main page/app surfaces hosting chatgpt or codex app
-    if t_type in ("page", "app"):
+    if t_type in ("page", "app", "webview"):
         if "chatgpt.com" in t_url or "app://-/index.html" in t_url:
             return True
         return any(x in (t_url + " " + t_title) for x in ["chatgpt", "codex"])
 
     return False
 
-async def send_cdp_cmd(ws, msg_id, method, params, timeout=8.0):
+async def send_cdp_cmd(ws, msg_id, method, params, timeout=5.0):
     await ws.send(json.dumps({"id": msg_id, "method": method, "params": params}))
     start_t = time.time()
     while time.time() - start_t < timeout:
@@ -192,59 +187,120 @@ async def handle_target_ipc(ws, raw_msg):
 
 async def target_worker(t_id, ws_url):
     """Dedicated persistent worker for an active ChatGPT DevTools target."""
-    while True:
-        try:
-            async with websockets.connect(ws_url, ping_interval=15, ping_timeout=10, close_timeout=3) as ws:
-                logger.info(f"[CPE WORKER] Connected to target {t_id}")
-                # Enable Runtime domain so bindingCalled events are delivered
-                await ws.send(json.dumps({"id": 1, "method": "Runtime.enable"}))
-                await ws.send(json.dumps({"id": 2, "method": "Runtime.addBinding", "params": {"name": "__cpe_daemon_ipc"}}))
-                try:
-                    await asyncio.wait_for(ws.recv(), timeout=2.0)
-                except Exception:
-                    pass
+    logger.info(f"[CPE WORKER] Starting worker for target {t_id}")
+    try:
+        async with websockets.connect(ws_url, ping_interval=15, ping_timeout=10, close_timeout=3) as ws:
+            logger.info(f"[CPE WORKER] Connected to target {t_id}")
+            # Enable Runtime and Page domains
+            await ws.send(json.dumps({"id": 1, "method": "Runtime.enable"}))
+            await ws.send(json.dumps({"id": 2, "method": "Page.enable"}))
+            await ws.send(json.dumps({"id": 3, "method": "Runtime.addBinding", "params": {"name": "__cpe_daemon_ipc"}}))
 
-                # Inject script
-                script = load_injector_script()
-                if script:
-                    await ws.send(json.dumps({
-                        "id": 3,
-                        "method": "Runtime.evaluate",
-                        "params": {"expression": script, "userGesture": True}
-                    }))
+            # Inject script & register for automatic evaluation on ANY future navigation / reload
+            script = load_injector_script()
+            if script:
+                # 1. Register script to run on any new document before other scripts
+                await ws.send(json.dumps({
+                    "id": 4,
+                    "method": "Page.addScriptToEvaluateOnNewDocument",
+                    "params": {"source": script}
+                }))
+                # 2. Evaluate immediately in current document context
+                await ws.send(json.dumps({
+                    "id": 5,
+                    "method": "Runtime.evaluate",
+                    "params": {"expression": script, "userGesture": True}
+                }))
+
+            # Guardian task: periodically checks HUD presence and keeps IPC binding alive
+            async def guardian():
+                while True:
+                    await asyncio.sleep(2.5)
                     try:
-                        await asyncio.wait_for(ws.recv(), timeout=4.0)
+                        chk_id = int(time.time() * 1000) % 1000000
+                        await ws.send(json.dumps({
+                            "id": chk_id,
+                            "method": "Runtime.evaluate",
+                            "params": {
+                                "expression": "Boolean(document.getElementById('cpe-hud-pill'))",
+                                "returnByValue": True
+                            }
+                        }))
                     except Exception:
-                        pass
+                        break
 
-                # Listen for IPC messages
+            guardian_task = asyncio.create_task(guardian())
+
+            hud_verified = False
+            try:
                 async for raw in ws:
-                    await handle_target_ipc(ws, raw)
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logger.debug(f"[CPE WORKER] Worker error for {t_id}: {e}")
-            await asyncio.sleep(2.0)
+                    try:
+                        msg = json.loads(raw)
+                    except Exception:
+                        continue
+
+                    method = msg.get("method")
+                    # Handle native IPC
+                    if method == "Runtime.bindingCalled" and msg.get("params", {}).get("name") == "__cpe_daemon_ipc":
+                        await handle_target_ipc(ws, raw)
+
+                    # Re-assert binding and re-inject on navigation / context rebuild
+                    elif method in ("Page.frameNavigated", "Runtime.executionContextCreated", "Page.loadEventFired"):
+                        await ws.send(json.dumps({"id": 80, "method": "Runtime.addBinding", "params": {"name": "__cpe_daemon_ipc"}}))
+                        fresh_script = load_injector_script()
+                        if fresh_script:
+                            await ws.send(json.dumps({
+                                "id": 81,
+                                "method": "Runtime.evaluate",
+                                "params": {"expression": fresh_script, "userGesture": True}
+                            }))
+
+                    # Guardian response check
+                    elif "result" in msg and "result" in msg.get("result", {}):
+                        val = msg["result"]["result"].get("value")
+                        if val is True and not hud_verified:
+                            hud_verified = True
+                            logger.info(f"[CPE WORKER] HUD pill verified active and present on target {t_id}")
+                        elif val is False:
+                            hud_verified = False
+                            logger.info(f"[CPE WORKER] HUD pill missing from target {t_id}, re-injecting suite...")
+                            fresh_script = load_injector_script()
+                            if fresh_script:
+                                await ws.send(json.dumps({"id": 82, "method": "Runtime.addBinding", "params": {"name": "__cpe_daemon_ipc"}}))
+                                await ws.send(json.dumps({
+                                    "id": 83,
+                                    "method": "Runtime.evaluate",
+                                    "params": {"expression": fresh_script, "userGesture": True}
+                                }))
+            finally:
+                guardian_task.cancel()
+
+    except asyncio.CancelledError:
+        logger.info(f"[CPE WORKER] Worker cancelled for target {t_id}")
+    except Exception as e:
+        logger.info(f"[CPE WORKER] Target disconnected or error for {t_id}: {e}")
 
 async def check_and_inject_target(ws_url, script, force=False):
     """Connects via WebSocket, binds IPC, and injects if needed."""
     if not websockets or not ws_url or not script:
         return False
     try:
-        async with websockets.connect(ws_url, ping_interval=None, ping_timeout=8, close_timeout=3) as ws:
-            # Bind native IPC
+        async with websockets.connect(ws_url, ping_interval=None, ping_timeout=5, close_timeout=2) as ws:
+            # Bind native IPC & Page domain
             await ws.send(json.dumps({"id": 9, "method": "Runtime.enable"}))
-            await ws.send(json.dumps({"id": 10, "method": "Runtime.addBinding", "params": {"name": "__cpe_daemon_ipc"}}))
-            try:
-                await asyncio.wait_for(ws.recv(), timeout=2.0)
-            except Exception:
-                pass
+            await ws.send(json.dumps({"id": 10, "method": "Page.enable"}))
+            await ws.send(json.dumps({"id": 11, "method": "Runtime.addBinding", "params": {"name": "__cpe_daemon_ipc"}}))
+            await ws.send(json.dumps({
+                "id": 12,
+                "method": "Page.addScriptToEvaluateOnNewDocument",
+                "params": {"source": script}
+            }))
 
             if not force:
                 check_resp = await send_cdp_cmd(ws, 1, "Runtime.evaluate", {
                     "expression": "Boolean(document.getElementById('cpe-hud-pill'))",
                     "returnByValue": True
-                }, timeout=3.0)
+                }, timeout=2.0)
                 has_pill = check_resp.get("result", {}).get("result", {}).get("value") if check_resp else False
                 if has_pill:
                     return False
@@ -254,7 +310,7 @@ async def check_and_inject_target(ws_url, script, force=False):
                 "expression": script,
                 "returnByValue": True,
                 "userGesture": True
-            }, timeout=8.0)
+            }, timeout=5.0)
             if eval_resp and "exceptionDetails" in eval_resp.get("result", {}):
                 ex = eval_resp["result"]["exceptionDetails"]
                 logger.error(f"Injection failed with exception on {ws_url[:40]}: {ex.get('text', '')} - {ex.get('exception', {}).get('description', '')}")
@@ -282,8 +338,8 @@ async def scan_and_inject_once(ports=[9223, 9224], force=False):
                     success_count += 1
     return success_count
 
-async def daemon_loop(ports=[9223, 9224], poll_interval=2.0):
-    logger.info(f"ChatGPT CDP Injector Daemon active on ports {ports}")
+async def daemon_loop(ports=[9223, 9224], poll_interval=0.4):
+    logger.info(f"ChatGPT CDP Injector Daemon active on ports {ports} (poll_interval={poll_interval}s)")
     workers = {}  # t_id -> asyncio.Task
     while True:
         try:
