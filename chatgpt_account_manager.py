@@ -586,16 +586,6 @@ def launch_chatgpt(instance_num=1, new_window=False, workspace_path=None):
             except Exception:
                 pass
 
-    if sys.platform == "win32" and instance_num == 1 and not new_window:
-        try:
-            subprocess.run(
-                ["powershell", "-NoProfile", "-Command", f"Start-Process -FilePath 'shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App' -ArgumentList '--remote-debugging-port={port}'"],
-                timeout=5
-            )
-            return True, f"Launched ChatGPT Instance 1 via Windows Application Manager with DevTools port {port}"
-        except Exception:
-            pass
-
     exe = get_chatgpt_exe_path()
     if not exe:
         codex_cli = get_codex_cli_path()

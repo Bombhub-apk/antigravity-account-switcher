@@ -1784,6 +1784,13 @@ def daemon_loop():
     except Exception:
         pass
 
+    # Ensure Antigravity IDE theme & fonts are permanently configured
+    try:
+        import setup_ide_theme
+        setup_ide_theme.setup_ide_theme()
+    except Exception as e:
+        log(f"[WARN] setup_ide_theme error: {e}")
+
     # Initial sync & injection
     try:
         sync_quota_once(force=True, inject=True)
@@ -1794,6 +1801,8 @@ def daemon_loop():
     last_heartbeat_time = time.time()
     last_injected_port = None
     last_verify_time = 0
+    last_chatgpt_check_time = 0
+    last_chatgpt_relaunch_time = 0
 
     while True:
         time.sleep(3)
@@ -1815,6 +1824,37 @@ def daemon_loop():
                 last_injected_port = None
         except Exception:
             pass
+
+        # 2. Watchdog: Ensure ChatGPT running instances always have DevTools port instrumentation
+        if now - last_chatgpt_check_time >= 5:
+            last_chatgpt_check_time = now
+            try:
+                import psutil
+                import chatgpt_account_manager as cpm
+                chatgpt_pids_without_port = []
+                has_instrumented_chatgpt = False
+                for p in psutil.process_iter(['pid', 'name', 'cmdline']):
+                    if 'chatgpt' in (p.info.get('name') or '').lower():
+                        cmd = p.info.get('cmdline') or []
+                        if not any('--type=' in arg for arg in cmd):
+                            if any('--remote-debugging-port' in arg for arg in cmd):
+                                has_instrumented_chatgpt = True
+                            else:
+                                chatgpt_pids_without_port.append(p)
+                
+                if chatgpt_pids_without_port and not has_instrumented_chatgpt:
+                    if now - last_chatgpt_relaunch_time > 20:
+                        last_chatgpt_relaunch_time = now
+                        log("[WATCHDOG] Detected ChatGPT running without DevTools port. Auto-relaunching with instrumentation...")
+                        for p in chatgpt_pids_without_port:
+                            try:
+                                p.terminate()
+                            except Exception:
+                                pass
+                        time.sleep(1.0)
+                        cpm.launch_chatgpt(instance_num=1)
+            except Exception:
+                pass
 
         # 3. Passive keepalive heartbeat and token refresh every 15 minutes (900 seconds)
         if now - last_heartbeat_time >= 900:
